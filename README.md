@@ -185,3 +185,34 @@ Output:
 [Reply UgyTIomDXMuKf3NTo294AaABAg.9TtQ3j7qvll9TtqSmVNrJu]
         Hey a heart
 ```
+
+## Authentication/Membership
+
+To access authenticated posts, like membership only posts, you need to provide cookies to authenticate your requests.
+
+```python
+from http import cookiejar
+from youtube_community_tab.requests_handler import requests_cache
+from youtube_community_tab.community_tab import CommunityTab
+
+cookie_jar = cookiejar.MozillaCookieJar("cookies.txt")
+cookie_jar.load()
+requests_cache.cookies = cookie_jar
+
+ct = CommunityTab("UCMwGHR0BTZuLsmjY_NT5Pwg")
+ct.load_posts()
+
+membership_post = None
+while ct.posts_continuation_token:
+  for post in ct.posts:
+    if post.sponsor_only_badge is not None:
+      membership_post = post
+      break
+
+  if(membership_post is not None):
+      break
+
+  ct.load_posts(expire_after=EXPIRATION_TIME)
+
+assert(membership_post is not None)
+```
