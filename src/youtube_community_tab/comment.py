@@ -101,6 +101,9 @@ class Comment(object):
                 if "continuationEndpoint" in item[kind]:
                     self.replies_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
                     there_is_no_continuation_token = False
+                elif "button" in item[kind]:
+                    self.replies_continuation_token = item[kind]["button"]["buttonRenderer"]["command"]["continuationCommand"]["token"]
+                    there_is_no_continuation_token = False
 
         if there_is_no_continuation_token:
             self.replies_continuation_token = False
