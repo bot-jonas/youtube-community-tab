@@ -1,12 +1,17 @@
-from setuptools import setup
+import os
+from setuptools import setup, find_packages
 
-setup()
+here = os.path.abspath(os.path.dirname(__file__))
 
-# from setuptools import setup, find_packages
+with open(os.path.join(here, "README.md"), 'r') as f:
+	long_description = f.read()
 
-# setup(name='youtube_community_tab',
-# 	version='0.2.1',
-# 	description='A python3 module to handle YouTube Community Tab',
-# 	package_dir={'': 'src'},
-# 	packages=find_packages(where='src'),
-# 	zip_safe=False)
+setup(name='youtube_community_tab',
+	version='0.2.2',
+	description='A python3 module to handle YouTube Community Tab',
+	long_description_content_type="text/markdown",
+    long_description=long_description,
+    url='https://github.com/bot-jonas/youtube-community-tab',
+	package_dir={'': 'src'},
+	packages=find_packages(where='src'),
+	zip_safe=False)
