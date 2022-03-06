@@ -42,19 +42,21 @@ def clean_backstage_attachement(attachment):
         elif "videoRenderer" in attachment:
             safe_pop(attachment, "videoRenderer", "navigationEndpoint", "watchEndpoint", "watchEndpointSupportedOnesieConfig")
             attachment["videoRenderer"]["watchEndpoint"] = safe(attachment, "videoRenderer", "navigationEndpoint", "watchEndpoint", default={})
-            attachment["videoRenderer"]["watchEndpoint"]["url"] = safe(attachment, "videoRenderer", "navigationEndpoint", "commandMetadata", "webCommandMetadata", "url")
+            attachment["videoRenderer"]["watchEndpoint"]["url"] = safe(
+                attachment, "videoRenderer", "navigationEndpoint", "commandMetadata", "webCommandMetadata", "url"
+            )
 
             for long_by_line in safe(attachment, "videoRenderer", "longBylineText", "runs", default=[]):
                 long_by_line["browseEndpoint"] = long_by_line["navigationEndpoint"]["browseEndpoint"]
                 long_by_line.pop("navigationEndpoint")
-            
+
             for short_by_line in safe(attachment, "videoRenderer", "shortBylineText", "runs", default=[]):
                 short_by_line["browseEndpoint"] = short_by_line["navigationEndpoint"]["browseEndpoint"]
                 short_by_line.pop("navigationEndpoint")
-            
+
             for author in safe(attachment, "videoRenderer", "ownerText", "runs", default=[]):
                 author["browseEndpoint"] = author["navigationEndpoint"]["browseEndpoint"]
-            
+
             for value in [
                 "publishedTimeText",
                 "navigationEndpoint",

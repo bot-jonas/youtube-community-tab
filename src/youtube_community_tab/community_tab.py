@@ -29,9 +29,7 @@ class CommunityTab(object):
         self.community_url = None
 
     def load_posts(self, expire_after=0):
-        headers = {
-            "Referer": self.community_url
-        }
+        headers = {"Referer": self.community_url}
 
         # Add authorization header
         current_cookies = dict_from_cookiejar(requests_cache.cookies)
@@ -71,37 +69,29 @@ class CommunityTab(object):
 
             self.click_tracking_params = CommunityTab.get_click_tracking_params_from_community_tab(community_tab)
             self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-            self.session_index = str(safely_get_value_from_key(data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"], "sessionIndex", default=""))
+            self.session_index = str(
+                safely_get_value_from_key(data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"], "sessionIndex", default="")
+            )
             self.append_posts_from_items(community_tab_items)
         elif self.posts_continuation_token is not False:
-            headers.update({
-                "X-Goog-AuthUser": self.session_index,
-                "X-Origin": "https://www.youtube.com",
-                "X-Youtube-Client-Name": "1",
-                "X-Youtube-Client-Version": CLIENT_VERSION
-            })
+            headers.update(
+                {
+                    "X-Goog-AuthUser": self.session_index,
+                    "X-Origin": "https://www.youtube.com",
+                    "X-Youtube-Client-Name": "1",
+                    "X-Youtube-Client-Version": CLIENT_VERSION,
+                }
+            )
 
             json_body = {
                 "context": {
-                    "client": {
-                        "clientName": "WEB",
-                        "clientVersion": CLIENT_VERSION,
-                        "originalUrl": self.community_url,
-                        "visitorData": self.visitor_data
-                    }
+                    "client": {"clientName": "WEB", "clientVersion": CLIENT_VERSION, "originalUrl": self.community_url, "visitorData": self.visitor_data}
                 },
                 "continuation": self.posts_continuation_token,
-                "clickTracking": {
-                    "clickTrackingParams": self.click_tracking_params
-                }
+                "clickTracking": {"clickTrackingParams": self.click_tracking_params},
             }
 
-            r = requests_cache.post(
-                CommunityTab.FORMAT_URLS["BROWSE_ENDPOINT"],
-                json=json_body,
-                expire_after=expire_after,
-                headers=headers
-            )
+            r = requests_cache.post(CommunityTab.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
 
             data = r.json()
             append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
