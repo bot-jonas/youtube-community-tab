@@ -1,9 +1,10 @@
 import json
 import re
 from requests.utils import dict_from_cookiejar
+from base64 import urlsafe_b64encode
 
 from .helpers.clean_items import clean_content_text, clean_backstage_attachement
-from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION
+from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION, search_key
 from .requests_handler import requests_cache
 from .comment import Comment
 
@@ -13,14 +14,16 @@ class Post(object):
         "POST": "https://www.youtube.com/post/{}",
         # HARD_CODED: This key seems to be constant to everyone, IDK
         "BROWSE_ENDPOINT": "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        "CREATE_COMMENT_ENDPOINT": "https://www.youtube.com/youtubei/v1/comment/create_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
     }
 
     REGEX = {
         "YT_INITIAL_DATA": "ytInitialData = ({(?:(?:.|\n)*)?});</script>",
     }
 
-    def __init__(self, post_id, author=None, content_text=None, backstage_attachment=None, vote_count=None, sponsor_only_badge=None):
+    def __init__(self, post_id, channel_id=None, author=None, content_text=None, backstage_attachment=None, vote_count=None, sponsor_only_badge=None):
         self.post_id = post_id
+        self.channel_id = channel_id
         self.author = author
         self.content_text = content_text
         self.backstage_attachment = backstage_attachment
@@ -37,6 +40,7 @@ class Post(object):
     def as_json(self):
         return {
             "post_id": self.post_id,
+            "channel_id": self.channel_id,
             "author": self.author,
             "content_text": self.content_text,
             "backstage_attachment": self.backstage_attachment,
@@ -71,6 +75,8 @@ class Post(object):
         post.session_index = str(
             safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex", default="")
         )
+
+        post.channel_id = search_key("externalId", data)[0][1]
 
         return post
 
@@ -186,6 +192,7 @@ class Post(object):
                     Comment.from_data(
                         item[kind]["comment"]["commentRenderer"],
                         self.post_id,
+                        self.channel_id,
                         safely_get_value_from_key(
                             item[kind],
                             "replies",
@@ -224,6 +231,60 @@ class Post(object):
         if self.content_text is not None:
             return "\n".join([run["text"] for run in runs])
         return None
+
+    def get_create_comment_params(self):
+        if self.channel_id is None or self.post_id is None:
+            return None
+
+        params = [
+            b"*\x02\b\x00P\x01\xA2\x01",
+            len(self.post_id).to_bytes(1, "big"),
+            self.post_id.encode(),
+            b"\xAA\x01",
+            len(self.channel_id).to_bytes(1, "big"),
+            self.channel_id.encode(),
+        ]
+
+        PAD1 = b"*\x02\b\x00P\x01\xA2\x01"
+        PAD2 = b"\xAA\x01"
+
+        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
+
+        return params
+
+    def create_comment(self, comment_text):
+        headers = {
+            "x-origin": "https://www.youtube.com",
+        }
+
+        current_cookies = dict_from_cookiejar(requests_cache.cookies)
+        if "SAPISID" in current_cookies:
+            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
+
+        json_body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": CLIENT_VERSION,
+                },
+            },
+            "createCommentParams": self.get_create_comment_params(),
+            "commentText": comment_text,
+        }
+
+        r = requests_cache.post(
+            Post.FORMAT_URLS["CREATE_COMMENT_ENDPOINT"],
+            json=json_body,
+            headers=headers,
+        )
+
+        try:
+            data = r.json()
+            comment_id = search_key("comment", data)[0][1]["commentRenderer"]["commentId"]
+
+            return Comment.from_ids(comment_id, self.post_id, self.channel_id)
+        except Exception as e:
+            raise e
 
     @staticmethod
     def from_data(data):
