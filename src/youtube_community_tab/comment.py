@@ -1,6 +1,5 @@
 import json
 from requests.utils import dict_from_cookiejar
-import re
 from base64 import urlsafe_b64encode
 
 from .requests_handler import requests_cache

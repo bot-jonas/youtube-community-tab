@@ -245,9 +245,6 @@ class Post(object):
             self.channel_id.encode(),
         ]
 
-        PAD1 = b"*\x02\b\x00P\x01\xA2\x01"
-        PAD2 = b"\xAA\x01"
-
         params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
 
         return params
