@@ -226,9 +226,6 @@ class Comment(object):
             r.json(), "onResponseReceivedEndpoints", 1, "reloadContinuationItemsCommand", "continuationItems", 0, "commentThreadRenderer"
         )
 
-        with open("/home/bot-jonas/dev/python/sauce/test.json", "w") as f:
-            f.write(json.dumps(r.json(), indent=4))
-
         if comment_data is not None:
             return Comment.from_data(
                 comment_data["comment"]["commentRenderer"],

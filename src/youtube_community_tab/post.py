@@ -67,6 +67,7 @@ class Post(object):
         community_tab_items = Post.get_items_from_community_tab(community_tab)
 
         post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]["backstagePostRenderer"]
+        post_data["channelId"] = data["metadata"]["channelMetadataRenderer"]["externalId"]
 
         post = Post.from_data(post_data)
         post.get_first_continuation_token(data)
@@ -75,8 +76,6 @@ class Post(object):
         post.session_index = str(
             safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex", default="")
         )
-
-        post.channel_id = search_key("externalId", data)[0][1]
 
         return post
 
@@ -298,6 +297,7 @@ class Post(object):
 
         post = Post(
             data["postId"],
+            channel_id=data["channelId"],
             author={
                 "authorText": safely_get_value_from_key(data, "authorText"),
                 "authorThumbnail": safely_get_value_from_key(data, "authorThumbnail"),

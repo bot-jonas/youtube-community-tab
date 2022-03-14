@@ -2,7 +2,7 @@ import json
 import re
 from requests.utils import dict_from_cookiejar
 
-from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION
+from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION, search_key
 from .requests_handler import requests_cache
 from .post import Post
 
@@ -27,6 +27,7 @@ class CommunityTab(object):
         self.session_index = "0"
         self.posts = []
         self.community_url = None
+        self.channel_id = None
 
     def load_posts(self, expire_after=0):
         headers = {"Referer": self.community_url}
@@ -53,6 +54,10 @@ class CommunityTab(object):
 
                 m = re.findall(CommunityTab.REGEX["YT_INITIAL_DATA"], r.text)
                 data = json.loads(m[0])
+
+                if self.channel_id is None:
+                    self.channel_id = data["metadata"]["channelMetadataRenderer"]["externalId"]
+
             except IndexError as e:
                 print("[Can't find yt_initial_data using the regex]")
                 raise e
@@ -104,7 +109,22 @@ class CommunityTab(object):
             kind = list(item.keys())[0]
 
             if kind == "backstagePostThreadRenderer":
-                self.posts.append(Post.from_data(item[kind]["post"]["backstagePostRenderer"]))
+                post_kind = list(item[kind]["post"].keys())[0]
+                if post_kind == "backstagePostRenderer":
+                    post_data = item[kind]["post"]["backstagePostRenderer"]
+                    post_data["channelId"] = self.channel_id
+                    self.posts.append(Post.from_data(post_data))
+                elif post_kind == "sharedPostRenderer":
+                    # TODO: parse data from item[kind]["post"]["sharedPostRenderer"]["originalPost"]["backstagePostRenderer"]
+                    post_data = item[kind]["post"]["sharedPostRenderer"]
+                    post_data["channelId"] = self.channel_id
+                    post_data["authorText"] = post_data["displayName"]
+                    post_data["authorEndpoint"] = post_data["endpoint"]
+                    post_data.pop("displayName")
+                    post_data.pop("endpoint")
+                    self.posts.append(Post.from_data(post_data))
+                else:
+                    raise Exception(f"[post_kind={post_kind} is not implemented yet!]")
             elif kind == "continuationItemRenderer":
                 self.posts_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
                 there_is_no_continuation_token = False
