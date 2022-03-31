@@ -135,7 +135,7 @@ class Post(object):
                 self.get_first_continuation_token(data)
                 self.get_click_tracking_params(data)
                 self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-                self.session_index = str(data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["sessionIndex"])
+                self.session_index = str(safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex"))
                 self.load_comments(expire_after=expire_after)
             except Exception as e:
                 print("[Some non-expected exception, probably caused by requests...]")

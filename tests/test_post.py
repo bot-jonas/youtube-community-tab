@@ -26,11 +26,18 @@ def test_post():
     replied_comments = list(filter(lambda x: x.replies_continuation_token, post.comments))
 
     if len(replied_comments) > 0:
-        comment = replied_comments[0]
+        test = False
+        for comment in replied_comments:
+            comment.load_replies(expire_after=EXPIRATION_TIME)
 
-        comment.load_replies(expire_after=EXPIRATION_TIME)
+            if len(comment.replies) > 0:
+                test = True
+                break
+            else:
+                print("You cannot open the replies from this comment!")
+                print(f"https://www.youtube.com/channel/{comment.channel_id}/community?lc={comment.comment_id}&lb={comment.post_id}")
 
-        assert len(comment.replies) > 0
+        assert test
 
 
 if __name__ == "__main__":
