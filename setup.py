@@ -8,7 +8,7 @@ with open(os.path.join(here, "README.md"), "r") as f:
 
 setup(
     name="youtube_community_tab",
-    version="0.2.3.2",
+    version="0.2.3.2.1",
     description="A python3 module to handle YouTube Community Tab",
     long_description_content_type="text/markdown",
     long_description=long_description,

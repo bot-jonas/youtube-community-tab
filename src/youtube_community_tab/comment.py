@@ -100,7 +100,7 @@ class Comment(object):
             r = requests_cache.post(Comment.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
 
             data = r.json()
-            append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
+            append = safely_get_value_from_key(data, "onResponseReceivedEndpoints", 0, "appendContinuationItemsAction", default=[])
             self.click_tracking_params = data["trackingParams"]
             continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
 
