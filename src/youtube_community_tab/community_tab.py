@@ -134,8 +134,11 @@ class CommunityTab(object):
 
     @staticmethod
     def get_community_tab(tabs):
-        COMMUNITY_TAB_INDEX = 3
-
+        COMMUNITY_TAB_INDEX = 0
+        for tabs_community in tabs:
+            if tabs_community["tabRenderer"]["endpoint"]["commandMetadata"]["webCommandMetadata"]["url"].find('community') is not -1:
+                break
+            COMMUNITY_TAB_INDEX = COMMUNITY_TAB_INDEX+1
         if len(tabs) >= COMMUNITY_TAB_INDEX + 1:
             return tabs[COMMUNITY_TAB_INDEX]
         else:
