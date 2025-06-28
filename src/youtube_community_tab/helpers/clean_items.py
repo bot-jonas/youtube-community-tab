@@ -12,9 +12,10 @@ def clean_content_text(content):
                 url = item["navigationEndpoint"]["urlEndpoint"]["url"]
                 # replace redirects with direct links
                 if url.startswith("https://www.youtube.com/redirect"):
-                    parsed_url = urlparse(item["navigationEndpoint"]["urlEndpoint"]["url"])
+                    parsed_url = urlparse(url)
                     redirect_url = parse_qs(parsed_url.query)["q"][0]
-                    item["urlEndpoint"] = {"url": unquote(redirect_url)}
+                    url = unquote(redirect_url)
+                item["urlEndpoint"] = {"url": url}
                 item.pop("navigationEndpoint")
             # hashtags
             elif "browseEndpoint" in item["navigationEndpoint"]:
@@ -26,7 +27,7 @@ def clean_content_text(content):
     return content
 
 
-def clean_backstage_attachement(attachment):
+def clean_backstage_attachment(attachment):
     if attachment:
         if "pollRenderer" in attachment:
             for choice in attachment["pollRenderer"]["choices"]:
@@ -67,5 +68,10 @@ def clean_backstage_attachement(attachment):
                 "thumbnailOverlays",
             ]:
                 safe_pop(attachment, "videoRenderer", value)
+        elif "backstageImageRenderer" in attachment:
+            safe_pop(attachment, "backstageImageRenderer", "trackingParams")
+        elif "postMultiImageRenderer" in attachment:
+            for image in attachment["postMultiImageRenderer"]["images"]:
+                safe_pop(image, "backstageImageRenderer", "trackingParams")
         return attachment
     return None

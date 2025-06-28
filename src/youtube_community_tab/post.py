@@ -3,7 +3,7 @@ import re
 from requests.utils import dict_from_cookiejar
 from base64 import urlsafe_b64encode
 
-from .helpers.clean_items import clean_content_text, clean_backstage_attachement
+from .helpers.clean_items import clean_content_text, clean_backstage_attachment
 from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION, search_key
 from .requests_handler import requests_cache
 from .comment import Comment
@@ -21,7 +21,7 @@ class Post(object):
         "YT_INITIAL_DATA": "ytInitialData = ({(?:(?:.|\n)*)?});</script>",
     }
 
-    def __init__(self, post_id, channel_id=None, author=None, content_text=None, backstage_attachment=None, vote_count=None, sponsor_only_badge=None):
+    def __init__(self, post_id, channel_id=None, author=None, content_text=None, backstage_attachment=None, vote_count=None, sponsor_only_badge=None, published_time_text=None, original_post=None):
         self.post_id = post_id
         self.channel_id = channel_id
         self.author = author
@@ -29,6 +29,8 @@ class Post(object):
         self.backstage_attachment = backstage_attachment
         self.vote_count = vote_count
         self.sponsor_only_badge = sponsor_only_badge
+        self.published_time_text = published_time_text
+        self.original_post = original_post
 
         self.first = True
         self.comments = []
@@ -46,6 +48,7 @@ class Post(object):
             "backstage_attachment": self.backstage_attachment,
             "vote_count": self.vote_count,
             "sponsor_only_badge": self.sponsor_only_badge,
+            "original_post": self.original_post,
         }
 
     @staticmethod
@@ -66,8 +69,7 @@ class Post(object):
         community_tab = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]
         community_tab_items = Post.get_items_from_community_tab(community_tab)
 
-        post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]["backstagePostRenderer"]
-        post_data["channelId"] = data["metadata"]["channelMetadataRenderer"]["externalId"]
+        post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]
 
         post = Post.from_data(post_data)
         post.get_first_continuation_token(data)
@@ -231,6 +233,9 @@ class Post(object):
             return "\n".join([run["text"] for run in runs])
         return None
 
+    def get_published_string(self):
+        return self.published_time_text
+
     def get_create_comment_params(self):
         if self.channel_id is None or self.post_id is None:
             return None
@@ -283,7 +288,22 @@ class Post(object):
             raise e
 
     @staticmethod
-    def from_data(data):
+    def from_data(post_data):
+        if "sharedPostRenderer" in post_data:
+            data = post_data["sharedPostRenderer"]
+            data["contentText"] = data.pop("content")
+            data["authorText"] = data.pop("displayName")
+            data["authorEndpoint"] = data.pop("endpoint")
+
+            original_post_data = post_data["sharedPostRenderer"]["originalPost"]
+            data["originalPost"] = Post.from_data(original_post_data)
+
+        elif "backstagePostRenderer" in post_data:
+            data = post_data["backstagePostRenderer"]
+        else:
+            raise NotImplementedError(f"[post_kind={list(post_data.keys())[0]} is not implemented yet!]")
+
+        data["channelId"] = data["authorEndpoint"]["browseEndpoint"]["browseId"]
         # clean the author cause it's different here for some reason
         for item in data["authorText"]["runs"]:
             item["browseEndpoint"] = item["navigationEndpoint"]["browseEndpoint"]
@@ -304,9 +324,11 @@ class Post(object):
                 "authorEndpoint": safely_get_value_from_key(data, "authorEndpoint"),
             },
             content_text=clean_content_text(safely_get_value_from_key(data, "contentText")),
-            backstage_attachment=clean_backstage_attachement(safely_get_value_from_key(data, "backstageAttachment", default=None)),
+            backstage_attachment=clean_backstage_attachment(safely_get_value_from_key(data, "backstageAttachment", default=None)),
             vote_count=safely_get_value_from_key(data, "voteCount"),
             sponsor_only_badge=safely_get_value_from_key(data, "sponsorsOnlyBadge", default=None),
+            published_time_text=safely_get_value_from_key(data, "publishedTimeText", "runs", 0, "text", default=None),
+            original_post=safely_get_value_from_key(data, "originalPost", default=None),
         )
 
         post.raw_data = data

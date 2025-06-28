@@ -8,7 +8,7 @@ from .utils import (
 )
 from .clean_items import (
     clean_content_text,
-    clean_backstage_attachement,
+    clean_backstage_attachment,
 )
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "search_key",
     "get_auth_header",
     "clean_content_text",
-    "clean_backstage_attachement",
+    "clean_backstage_attachment",
     "CLIENT_VERSION",
 ]
