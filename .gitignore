@@ -1,6 +1,6 @@
-*/__pycache__/*
-*/*.egg-info/*
+__pycache__
+*.egg-info
 *.sqlite
-build/*
-dist/*
+build
+dist
 tests/cookies.txt

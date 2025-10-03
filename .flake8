@@ -1,3 +1,2 @@
 [flake8]
-max-line-length = 200
-max-complexity = 18
+max-line-length = 160

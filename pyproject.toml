@@ -1,2 +1,16 @@
-[tool.black]
-line-length = 160
+[build-system]
+requires = ["flit_core >= 3.12.0, <4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = 'youtube_community_tab'
+description = 'Python3 interface to YouTube community tab'
+readme = 'README.md'
+license-files = ['LICENSE']
+dependencies = [
+  'requests_cache',
+]
+dynamic = ['version']
+
+[project.optional-dependencies]
+test = ['pytest']

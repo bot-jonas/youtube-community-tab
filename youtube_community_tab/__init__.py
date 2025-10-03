@@ -8,6 +8,8 @@ from .post import Post
 from .reply import Reply
 from .requests_handler import requests_cache
 
+VERSION = __version__ = "0.3.0"
+
 __all__ = [
     "helpers",
     "Comment",
@@ -15,4 +17,6 @@ __all__ = [
     "Post",
     "Reply",
     "requests_cache",
+    "VERSION",
+    "__version__",
 ]

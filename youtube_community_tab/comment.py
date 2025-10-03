@@ -97,12 +97,25 @@ class Comment(object):
                 "clickTracking": {"clickTrackingParams": self.click_tracking_params},
             }
 
-            r = requests_cache.post(Comment.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
+            r = requests_cache.post(
+                Comment.FORMAT_URLS["BROWSE_ENDPOINT"],
+                json=json_body,
+                expire_after=expire_after,
+                headers=headers,
+            )
 
             data = r.json()
-            append = safely_get_value_from_key(data, "onResponseReceivedEndpoints", 0, "appendContinuationItemsAction", default=[])
+            append = safely_get_value_from_key(
+                data,
+                "onResponseReceivedEndpoints",
+                0,
+                "appendContinuationItemsAction",
+                default=[],
+            )
             self.click_tracking_params = data["trackingParams"]
-            continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
+            continuation_items = safely_get_value_from_key(
+                append, "continuationItems", default=[]
+            )
 
             self.append_replies_from_items(continuation_items)
 
@@ -115,17 +128,29 @@ class Comment(object):
                 self.replies.append(Reply.from_data(item[kind]))
             elif kind == "continuationItemRenderer":
                 if "continuationEndpoint" in item[kind]:
-                    self.replies_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
+                    self.replies_continuation_token = item[kind][
+                        "continuationEndpoint"
+                    ]["continuationCommand"]["token"]
                     there_is_no_continuation_token = False
                 elif "button" in item[kind]:
-                    self.replies_continuation_token = item[kind]["button"]["buttonRenderer"]["command"]["continuationCommand"]["token"]
+                    self.replies_continuation_token = item[kind]["button"][
+                        "buttonRenderer"
+                    ]["command"]["continuationCommand"]["token"]
                     there_is_no_continuation_token = False
 
         if there_is_no_continuation_token:
             self.replies_continuation_token = False
 
     @staticmethod
-    def from_data(data, post_id, channel_id, replies_continuation_token, click_tracking_params, visitor_data, session_index):
+    def from_data(
+        data,
+        post_id,
+        channel_id,
+        replies_continuation_token,
+        click_tracking_params,
+        visitor_data,
+        session_index,
+    ):
         comment = Comment(
             post_id,
             data["commentId"],
@@ -134,9 +159,15 @@ class Comment(object):
             author={
                 "authorText": safely_get_value_from_key(data, "authorText"),
                 "authorThumbnail": safely_get_value_from_key(data, "authorThumbnail"),
-                "authorEndpoint": safely_get_value_from_key(data, "authorEndpoint", "browseEndpoint"),
-                "authorIsChannelOwner": safely_get_value_from_key(data, "authorIsChannelOwner"),
-                "sponsorCommentBadge": safely_get_value_from_key(data, "sponsorCommentBadge"),
+                "authorEndpoint": safely_get_value_from_key(
+                    data, "authorEndpoint", "browseEndpoint"
+                ),
+                "authorIsChannelOwner": safely_get_value_from_key(
+                    data, "authorIsChannelOwner"
+                ),
+                "sponsorCommentBadge": safely_get_value_from_key(
+                    data, "sponsorCommentBadge"
+                ),
             },
             vote_count=safely_get_value_from_key(data, "voteCount"),
             replies_continuation_token=replies_continuation_token,
@@ -152,25 +183,25 @@ class Comment(object):
     @staticmethod
     def get_fixed_comment_params(comment_id, post_id, channel_id):
         part1 = [
-            b"\x12\tcommunity\xB8\x01\x00\xCA\x01",
+            b"\x12\tcommunity\xb8\x01\x00\xca\x01",
             (32 + len(post_id)).to_bytes(1, "big"),
             b"\x82\x01",
             len(comment_id).to_bytes(1, "big"),
             comment_id.encode(),
-            b"\xB2\x01",
+            b"\xb2\x01",
             len(post_id).to_bytes(1, "big"),
             post_id.encode(),
-            b"\xEA\x02\x04\x10\x01\x18\x01\xAA\x03",
+            b"\xea\x02\x04\x10\x01\x18\x01\xaa\x03",
             (84 + len(post_id)).to_bytes(1, "big"),
             b"\x22",
             (64 + len(post_id)).to_bytes(1, "big"),
             b"0\x00\x82\x01",
             len(comment_id).to_bytes(1, "big"),
             comment_id.encode(),
-            b"\xD8\x01\x01\xEA\x01",
+            b"\xd8\x01\x01\xea\x01",
             len(post_id).to_bytes(1, "big"),
             post_id.encode(),
-            b"\xF2\x01",
+            b"\xf2\x01",
             len(channel_id).to_bytes(1, "big"),
             channel_id.encode(),
             b"B\x10comments-section",
@@ -184,7 +215,7 @@ class Comment(object):
             b"\x02\x12",
             len(channel_id).to_bytes(1, "big"),
             channel_id.encode(),
-            b"\x1A",
+            b"\x1a",
             (54 + 3 * len(post_id)).to_bytes(1, "big"),
             b"\x02",
             part1,
@@ -196,7 +227,9 @@ class Comment(object):
 
     @staticmethod
     def from_ids(comment_id, post_id, channel_id, expire_after=0):
-        fixed_comment_url = Comment.FORMAT_URLS["FIXED_COMMENT"].format(channel_id, comment_id, post_id)
+        fixed_comment_url = Comment.FORMAT_URLS["FIXED_COMMENT"].format(
+            channel_id, comment_id, post_id
+        )
         headers = {
             "x-origin": "https://www.youtube.com",
             "Referer": fixed_comment_url,
@@ -220,10 +253,21 @@ class Comment(object):
             "continuation": c,
         }
 
-        r = requests_cache.post(Comment.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
+        r = requests_cache.post(
+            Comment.FORMAT_URLS["BROWSE_ENDPOINT"],
+            json=json_body,
+            expire_after=expire_after,
+            headers=headers,
+        )
 
         comment_data = safely_get_value_from_key(
-            r.json(), "onResponseReceivedEndpoints", 1, "reloadContinuationItemsCommand", "continuationItems", 0, "commentThreadRenderer"
+            r.json(),
+            "onResponseReceivedEndpoints",
+            1,
+            "reloadContinuationItemsCommand",
+            "continuationItems",
+            0,
+            "commentThreadRenderer",
         )
 
         if comment_data is not None:
@@ -275,12 +319,25 @@ class Comment(object):
         return params
 
     def update_comment(self, comment_text):
-        return Comment._update_comment(comment_text, comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
+        return Comment._update_comment(
+            comment_text,
+            comment_id=self.comment_id,
+            post_id=self.post_id,
+            channel_id=self.channel_id,
+        )
 
     @staticmethod
-    def _update_comment(comment_text, update_comment_params=None, comment_id=None, post_id=None, channel_id=None):
+    def _update_comment(
+        comment_text,
+        update_comment_params=None,
+        comment_id=None,
+        post_id=None,
+        channel_id=None,
+    ):
         if update_comment_params is None:
-            update_comment_params = Comment.get_update_comment_params(comment_id, post_id, channel_id)
+            update_comment_params = Comment.get_update_comment_params(
+                comment_id, post_id, channel_id
+            )
 
         headers = {
             "x-origin": "https://www.youtube.com",
@@ -312,16 +369,16 @@ class Comment(object):
     @staticmethod
     def get_delete_comment_params(comment_id, post_id, channel_id):
         params = [
-            b"\b\x06\x10\x07\x1A",
+            b"\b\x06\x10\x07\x1a",
             len(comment_id).to_bytes(1, "big"),
             comment_id.encode(),
-            b"0\x00J\x15115587043600121621724P\x00\xA8\x01\x01\xB2\x01",
+            b"0\x00J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
             len(post_id).to_bytes(1, "big"),
             post_id.encode(),
-            b"\xBA\x01",
+            b"\xba\x01",
             len(channel_id).to_bytes(1, "big"),
             channel_id.encode(),
-            b"\xF0\x01\x01",
+            b"\xf0\x01\x01",
         ]
 
         params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
@@ -329,30 +386,36 @@ class Comment(object):
         return params
 
     def delete_comment(self):
-        return Comment._delete_comment(comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
+        return Comment._delete_comment(
+            comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id
+        )
 
     @staticmethod
-    def _delete_comment(delete_comment_params=None, comment_id=None, post_id=None, channel_id=None):
+    def _delete_comment(
+        delete_comment_params=None, comment_id=None, post_id=None, channel_id=None
+    ):
         if delete_comment_params is None:
-            delete_comment_params = Comment.get_delete_comment_params(comment_id, post_id, channel_id)
+            delete_comment_params = Comment.get_delete_comment_params(
+                comment_id, post_id, channel_id
+            )
 
         return Comment.perform_action(delete_comment_params)
 
     @staticmethod
     def get_dislike_comment_params(value, comment_id, post_id, channel_id):
         params = [
-            b"\b\x04\x10\x07\x1A",
+            b"\b\x04\x10\x07\x1a",
             len(comment_id).to_bytes(1, "big"),
             comment_id.encode(),
             b"0\x008",
             (not value).to_bytes(1, "big"),
-            b"J\x15115587043600121621724P\x00\xA8\x01\x01\xB2\x01",
+            b"J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
             len(post_id).to_bytes(1, "big"),
             post_id.encode(),
-            b"\xBA\x01",
+            b"\xba\x01",
             len(channel_id).to_bytes(1, "big"),
             channel_id.encode(),
-            b"\xF0\x01\x01",
+            b"\xf0\x01\x01",
         ]
 
         params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
@@ -360,30 +423,43 @@ class Comment(object):
         return params
 
     def set_dislike_comment(self, value=True):
-        return Comment._set_dislike_comment(value, comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
+        return Comment._set_dislike_comment(
+            value,
+            comment_id=self.comment_id,
+            post_id=self.post_id,
+            channel_id=self.channel_id,
+        )
 
     @staticmethod
-    def _set_dislike_comment(value, dislike_comment_params=None, comment_id=None, post_id=None, channel_id=None):
+    def _set_dislike_comment(
+        value,
+        dislike_comment_params=None,
+        comment_id=None,
+        post_id=None,
+        channel_id=None,
+    ):
         if dislike_comment_params is None:
-            dislike_comment_params = Comment.get_dislike_comment_params(value, comment_id, post_id, channel_id)
+            dislike_comment_params = Comment.get_dislike_comment_params(
+                value, comment_id, post_id, channel_id
+            )
 
         return Comment.perform_action(dislike_comment_params)
 
     @staticmethod
     def get_like_comment_params(value, comment_id, post_id, channel_id):
         params = [
-            b"\b\x05\x10\x07\x1A",
+            b"\b\x05\x10\x07\x1a",
             len(comment_id).to_bytes(1, "big"),
             comment_id.encode(),
             b"0\x008",
             (not value).to_bytes(1, "big"),
-            b"J\x15115587043600121621724P\x00\xA8\x01\x01\xB2\x01",
+            b"J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
             len(post_id).to_bytes(1, "big"),
             post_id.encode(),
-            b"\xBA\x01",
+            b"\xba\x01",
             len(channel_id).to_bytes(1, "big"),
             channel_id.encode(),
-            b"\xF0\x01\x01",
+            b"\xf0\x01\x01",
         ]
 
         params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
@@ -391,12 +467,21 @@ class Comment(object):
         return params
 
     def set_like_comment(self, value=True):
-        return Comment._set_like_comment(value, comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
+        return Comment._set_like_comment(
+            value,
+            comment_id=self.comment_id,
+            post_id=self.post_id,
+            channel_id=self.channel_id,
+        )
 
     @staticmethod
-    def _set_like_comment(value, like_comment_params=None, comment_id=None, post_id=None, channel_id=None):
+    def _set_like_comment(
+        value, like_comment_params=None, comment_id=None, post_id=None, channel_id=None
+    ):
         if like_comment_params is None:
-            like_comment_params = Comment.get_like_comment_params(value, comment_id, post_id, channel_id)
+            like_comment_params = Comment.get_like_comment_params(
+                value, comment_id, post_id, channel_id
+            )
 
         return Comment.perform_action(like_comment_params)
 
