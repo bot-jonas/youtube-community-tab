@@ -9,13 +9,14 @@ from .post import Post
 
 class CommunityTab(object):
     FORMAT_URLS = {
-        "COMMUNITY_TAB": "https://www.youtube.com/{}/{}/community",
+        "COMMUNITY_TAB": "https://www.youtube.com/{}/{}/posts",
         # HARD_CODED: This key seems to be constant to everyone, IDK
         "BROWSE_ENDPOINT": "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
     }
 
     REGEX = {
         "YT_INITIAL_DATA": "ytInitialData = ({(?:(?:.|\n)*)?});</script>",
+        "COMMUNITY_TAB_URL": "^\/.*\/posts$",
     }
 
     def __init__(self, channel_name):
@@ -134,15 +135,10 @@ class CommunityTab(object):
 
     @staticmethod
     def get_community_tab(tabs):
-        COMMUNITY_TAB_INDEX = 0
-        for tabs_community in tabs:
-            if tabs_community["tabRenderer"]["endpoint"]["commandMetadata"]["webCommandMetadata"]["url"].find('community') is not -1:
-                break
-            COMMUNITY_TAB_INDEX = COMMUNITY_TAB_INDEX+1
-        if len(tabs) >= COMMUNITY_TAB_INDEX + 1:
-            return tabs[COMMUNITY_TAB_INDEX]
-        else:
-            raise Exception(f"[The community tab is expected to have index equal to {COMMUNITY_TAB_INDEX}, but len(tabs) = {len(tabs)}]")
+        for tab in tabs:
+            if "tabRenderer" in tab and re.match(CommunityTab.REGEX["COMMUNITY_TAB_URL"], tab["tabRenderer"]["endpoint"]["commandMetadata"]["webCommandMetadata"]["url"]):
+                return tab
+        raise Exception("[Could not find a Community tab in the channel response]")
 
     @staticmethod
     def get_items_from_community_tab(tab):
@@ -157,5 +153,5 @@ class CommunityTab(object):
         try:
             return tab["tabRenderer"]["content"]["sectionListRenderer"]["trackingParams"]
         except Exception as e:
-            print("[Can't get tracking params from the tab")
+            print("[Can't get tracking params from the tab]")
             raise e
