@@ -4,13 +4,14 @@ from base64 import urlsafe_b64encode
 
 from .helpers.utils import deep_get, CLIENT_VERSION
 from .requests_handler import default_requests_handler
+from .protobuf.keys.fixed_comment_params import fixed_comment_params
 
 
 class Comment(object):
     POST_FORMAT_URL = "https://www.youtube.com/post/{}"
     FIXED_COMMENT_FORMAT_URL = "https://www.youtube.com/post/{}?lc={}"
 
-    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"
     UPDATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/update_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
     PERFORM_COMMENT_ACTION_ENDPOINT = (
         "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
@@ -170,55 +171,10 @@ class Comment(object):
         )
 
     @staticmethod
-    def get_fixed_comment_params(comment_id, post_id, channel_id):
-        part1 = [
-            b"\x12\tcommunity\xb8\x01\x00\xca\x01",
-            (32 + len(post_id)).to_bytes(1, "big"),
-            b"\x82\x01",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"\xb2\x01",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"\xea\x02\x04\x10\x01\x18\x01\xaa\x03",
-            (84 + len(post_id)).to_bytes(1, "big"),
-            b"\x22",
-            (64 + len(post_id)).to_bytes(1, "big"),
-            b"0\x00\x82\x01",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"\xd8\x01\x01\xea\x01",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"\xf2\x01",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-            b"B\x10comments-section",
-        ]
-
-        part1 = urlsafe_b64encode(b"".join(part1)).replace(b"=", b"%3D")
-
-        params = [
-            b"\xe2\xa9\x85\xb2\x02",
-            (83 + 3 * len(post_id)).to_bytes(1, "big"),
-            b"\x02\x12",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-            b"\x1a",
-            (54 + 3 * len(post_id)).to_bytes(1, "big"),
-            b"\x02",
-            part1,
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
-    @staticmethod
     def from_ids(comment_id, post_id, channel_id, requests_handler=default_requests_handler):
         fixed_comment_url = Comment.FIXED_COMMENT_FORMAT_URL.format(post_id, comment_id)
 
-        c = Comment.get_fixed_comment_params(comment_id, post_id, channel_id)
+        c = fixed_comment_params(comment_id, post_id, channel_id)
 
         body = {
             "context": {
@@ -231,47 +187,36 @@ class Comment(object):
             "continuation": c,
         }
 
-        resp = requests_handler.post(fixed_comment_url, json=body)
-        print(fixed_comment_url)
+        resp = requests_handler.post(Comment.BROWSE_ENDPOINT, json=body)
+        data = resp.json()
 
-        comment_data = deep_get(
-            resp.json(),
-            "onResponseReceivedEndpoints",
-            1,
-            "reloadContinuationItemsCommand",
-            "continuationItems",
-            0,
-            "commentThreadRenderer",
-        )
+        mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
+        payload = None
+        for mutation in mutations:
+            payload = mutation["payload"]
 
-        if comment_data is not None:
+            if "commentEntityPayload" not in payload:
+                continue
+
+            payload = payload["commentEntityPayload"]
+
+            if comment_id == payload["properties"]["commentId"]:
+                break
+
+            payload = None
+
+        if payload is not None:
+            replies_continuation_endpoint_key = "onResponseReceivedEndpoints.1.reloadContinuationItemsCommand.continuationItems.0.commentThreadRenderer.replies.commentRepliesRenderer.contents.0.continuationItemRenderer.continuationEndpoint"  # noqa
+
             return Comment.from_data(
-                comment_data["comment"]["commentRenderer"],
+                payload,
                 post_id,
                 channel_id,
-                deep_get(
-                    comment_data,
-                    "replies",
-                    "commentRepliesRenderer",
-                    "contents",
-                    0,
-                    "continuationItemRenderer",
-                    "continuationEndpoint",
-                    "continuationCommand",
-                    "token",
-                ),
-                deep_get(
-                    comment_data,
-                    "replies",
-                    "commentRepliesRenderer",
-                    "contents",
-                    0,
-                    "continuationItemRenderer",
-                    "continuationEndpoint",
-                    "clickTrackingParams",
-                ),
-                None,
-                None,
+                replies_continuation_token=deep_get(data, f"{replies_continuation_endpoint_key}.continuationCommand.token"),
+                click_tracking_params=deep_get(data, f"{replies_continuation_endpoint_key}.clickTrackingParams"),
+                visitor_data=None,
+                session_index=None,
+                requests_handler=requests_handler,
             )
 
     @staticmethod

@@ -8,7 +8,7 @@ description = 'Python3 interface to YouTube community tab'
 readme = 'README.md'
 license-files = ['LICENSE']
 dependencies = [
-  'requests_cache',
+  'protobuf',
 ]
 dynamic = ['version']
 

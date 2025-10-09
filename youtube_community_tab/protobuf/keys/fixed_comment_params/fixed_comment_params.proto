@@ -1,0 +1,38 @@
+syntax = "proto2";
+
+message FixedCommentParams {
+  required Msg1 msg1 = 80226972;
+
+  message Msg1 {
+    required string str1 = 2; // "FEcomment_post_detail_page_web_top_level"
+    required string InnerFixedCommentParams_b64 = 3;
+  }
+}
+
+message InnerFixedCommentParams {
+    required string str2 = 2; // "posts"
+
+    required Msg2 msg2 = 53;
+
+    required Msg3 msg3 = 56;
+
+    message Msg2  {
+      required Msg4 msg4 = 4;
+      required string str3 = 8; // "comments-section"
+    }
+
+    message Msg4 {
+      required int32 int1 = 6; // 0
+      required string comment_id = 16;
+      required int32 int2 = 27; // 1
+      required string post_id = 29;
+      required string channel_id = 30;
+    }
+
+    message Msg3 {
+      required string channel_id = 2;
+      required string post_id = 3;
+      required string comment_id = 8;
+      required string channel_id2 = 11;
+    }
+  }
