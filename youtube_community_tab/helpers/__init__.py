@@ -1,23 +1,27 @@
 from .utils import (
-    safely_get_value_from_key,
-    save_object_to_file,
-    safely_pop_value_from_key,
+    deep_get,
+    deep_pop,
     search_key,
-    get_auth_header,
+    save_object_to_file,
     CLIENT_VERSION,
 )
 from .clean_items import (
     clean_content_text,
     clean_backstage_attachment,
+    clean_post_author,
+)
+from .logger import (
+    error,
 )
 
 __all__ = [
-    "safely_get_value_from_key",
-    "safely_pop_value_from_key",
-    "save_object_to_file",
+    "deep_get",
+    "deep_pop",
     "search_key",
-    "get_auth_header",
+    "save_object_to_file",
+    "CLIENT_VERSION",
     "clean_content_text",
     "clean_backstage_attachment",
-    "CLIENT_VERSION",
+    "clean_post_author",
+    "error",
 ]

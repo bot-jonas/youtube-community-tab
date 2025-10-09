@@ -4,24 +4,31 @@ from requests.utils import dict_from_cookiejar
 from base64 import urlsafe_b64encode
 
 from .helpers.clean_items import clean_content_text, clean_backstage_attachment
-from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION, search_key
-from .requests_handler import requests_cache
+from .helpers.utils import deep_get, CLIENT_VERSION, search_key
+from .helpers.logger import error
+from .requests_handler import default_requests_handler
 from .comment import Comment
 
 
 class Post(object):
-    FORMAT_URLS = {
-        "POST": "https://www.youtube.com/post/{}",
-        # HARD_CODED: This key seems to be constant to everyone, IDK
-        "BROWSE_ENDPOINT": "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        "CREATE_COMMENT_ENDPOINT": "https://www.youtube.com/youtubei/v1/comment/create_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
-    }
+    POST_URL_FORMAT = "https://www.youtube.com/post/{}"
+    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+    CREATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/create_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
+    REGEX_YT_INITIAL_DATA = r"ytInitialData = ({(?:(?:.|\n)*)?});</script>"
 
-    REGEX = {
-        "YT_INITIAL_DATA": "ytInitialData = ({(?:(?:.|\n)*)?});</script>",
-    }
-
-    def __init__(self, post_id, channel_id=None, author=None, content_text=None, backstage_attachment=None, vote_count=None, sponsor_only_badge=None, published_time_text=None, original_post=None):
+    def __init__(
+        self,
+        post_id,
+        channel_id=None,
+        author=None,
+        content_text=None,
+        backstage_attachment=None,
+        vote_count=None,
+        sponsor_only_badge=None,
+        published_time_text=None,
+        original_post=None,
+        requests_handler=default_requests_handler,
+    ):
         self.post_id = post_id
         self.channel_id = channel_id
         self.author = author
@@ -31,13 +38,16 @@ class Post(object):
         self.sponsor_only_badge = sponsor_only_badge
         self.published_time_text = published_time_text
         self.original_post = original_post
-
-        self.first = True
         self.comments = []
-        self.comments_continuation_token = None
-        self.click_tracking_params = None
-        self.visitor_data = None
-        self.session_index = "0"
+
+        self._requests_handler = requests_handler
+        self._post_url = Post.POST_URL_FORMAT.format(self.post_id)
+        self._first = True
+        self._comments_continuation_token = None
+
+        self._click_tracking_params = None
+        self._visitor_data = None
+        self._session_index = "0"
 
     def as_json(self):
         return {
@@ -50,36 +60,6 @@ class Post(object):
             "sponsor_only_badge": self.sponsor_only_badge,
             "original_post": self.original_post,
         }
-
-    @staticmethod
-    def from_post_id(post_id, expire_after=0):
-        headers = {"Referer": Post.FORMAT_URLS["POST"].format(post_id)}
-
-        # Add authorization header
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
-
-        post_url = Post.FORMAT_URLS["POST"].format(post_id)
-        r = requests_cache.get(post_url, expire_after=expire_after, headers=headers)
-
-        m = re.findall(Post.REGEX["YT_INITIAL_DATA"], r.text)
-        data = json.loads(m[0])
-
-        community_tab = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]
-        community_tab_items = Post.get_items_from_community_tab(community_tab)
-
-        post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]
-
-        post = Post.from_data(post_data)
-        post.get_first_continuation_token(data)
-        post.get_click_tracking_params(data)
-        post.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-        post.session_index = str(
-            safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex", default="")
-        )
-
-        return post
 
     def __str__(self):
         return json.dumps(self.as_json(), indent=4)
@@ -109,125 +89,126 @@ class Post(object):
 
         return thumbnails
 
-    def get_first_continuation_token(self, data):
-        self.comments_continuation_token = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"][
-            "contents"
-        ][1]["itemSectionRenderer"]["contents"][0]["continuationItemRenderer"]["continuationEndpoint"]["continuationCommand"]["token"]
+    def load_comments(self):
+        if self._comments_continuation_token is None:
+            resp = self._requests_handler.get(self._post_url)
 
-    def get_click_tracking_params(self, data):
-        self.click_tracking_params = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"]["contents"][
-            1
-        ]["itemSectionRenderer"]["contents"][0]["continuationItemRenderer"]["continuationEndpoint"]["clickTrackingParams"]
+            if resp.status_code != 200:
+                error(f"Could not get data from the post_id `{self.post_id}` using the url `{self._post_url}`")
 
-    def load_comments(self, expire_after=0):
-        headers = {"Referer": Post.FORMAT_URLS["POST"].format(self.post_id)}
+            matches = re.findall(Post.REGEX_YT_INITIAL_DATA, resp.text)
 
-        # Add authorization header
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
+            if not matches:
+                error("Could not find ytInitialData")
 
-        if self.comments_continuation_token is None:
             try:
-                r = requests_cache.get(Post.FORMAT_URLS["POST"].format(self.post_id), expire_after=expire_after, headers=headers)
+                ytInitialData = json.loads(matches[0])
+            except json.decoder.JSONDecodeError:
+                error("Could not parse json from ytInitialData")
 
-                m = re.findall(Post.REGEX["YT_INITIAL_DATA"], r.text)
-                data = json.loads(m[0])
+            self._get_first_continuation_token(ytInitialData)
 
-                self.get_first_continuation_token(data)
-                self.get_click_tracking_params(data)
-                self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-                self.session_index = str(safely_get_value_from_key(data, "responseContext", "webResponseContextExtensionData", "ytConfigData", "sessionIndex"))
-                self.load_comments(expire_after=expire_after)
-            except Exception as e:
-                print("[Some non-expected exception, probably caused by requests...]")
-                raise e
-        elif self.comments_continuation_token is not False:
-            headers.update(
-                {
-                    "X-Goog-AuthUser": self.session_index,
-                    "X-Origin": "https://www.youtube.com",
-                    "X-Youtube-Client-Name": "1",
-                    "X-Youtube-Client-Version": CLIENT_VERSION,
-                }
-            )
+            self._update_session_attributes(ytInitialData)
 
-            json_body = {
+            self.load_comments()
+        elif self._comments_continuation_token is not False:
+            headers = {
+                "X-Goog-AuthUser": self._session_index,
+                "X-Origin": "https://www.youtube.com",
+                "X-Youtube-Client-Name": "1",
+                "X-Youtube-Client-Version": CLIENT_VERSION,
+            }
+
+            body = {
                 "context": {
                     "client": {
                         "clientName": "WEB",
                         "clientVersion": CLIENT_VERSION,
-                        "originalUrl": Post.FORMAT_URLS["POST"].format(self.post_id),
-                        "visitorData": self.visitor_data,
+                        "originalUrl": Post.POST_URL_FORMAT.format(self.post_id),
+                        "visitorData": self._visitor_data,
                     }
                 },
-                "continuation": self.comments_continuation_token,
-                "clickTracking": {"clickTrackingParams": self.click_tracking_params},
+                "continuation": self._comments_continuation_token,
+                "clickTracking": {"clickTrackingParams": self._click_tracking_params},
             }
 
-            r = requests_cache.post(Post.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
+            resp = self._requests_handler.post(Post.BROWSE_ENDPOINT, json=body, headers=headers)
+            data = resp.json()
 
-            data = r.json()
-            if self.first:
+            mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
+            payload_by_id = {}
+            for mutation in mutations:
+                payload = mutation["payload"]
+
+                if "commentEntityPayload" not in payload:
+                    continue
+
+                payload = payload["commentEntityPayload"]
+                comment_id = payload["properties"]["commentId"]
+
+                payload_by_id[comment_id] = payload
+
+            if self._first:
                 if "continuationItems" not in data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]:
                     # There are no comments
                     continuation_items = []
                 else:
                     append = data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]
-                    continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
-                    self.first = False
+                    continuation_items = deep_get(append, "continuationItems", default=[])
+                    self._first = False
             else:
                 append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
-                continuation_items = safely_get_value_from_key(append, "continuationItems", default=[])
+                continuation_items = deep_get(append, "continuationItems", default=[])
 
-            self.click_tracking_params = data["trackingParams"]
-            self.append_comments_from_items(continuation_items)
+            self._click_tracking_params = data["trackingParams"]
 
-    def append_comments_from_items(self, items):
+            self._append_comments_from_items(continuation_items, payload_by_id)
+
+    def _get_first_continuation_token(self, ytInitialData):
+        self._comments_continuation_token = ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][
+            "sectionListRenderer"
+        ]["contents"][1]["itemSectionRenderer"]["contents"][0]["continuationItemRenderer"]["continuationEndpoint"]["continuationCommand"]["token"]
+
+    def _update_session_attributes(self, ytInitialData):
+        self._click_tracking_params = ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"][
+            "contents"
+        ][1]["itemSectionRenderer"]["contents"][0]["continuationItemRenderer"]["continuationEndpoint"]["clickTrackingParams"]
+
+        self._visitor_data = ytInitialData["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
+        self._session_index = str(deep_get(ytInitialData, "responseContext.webResponseContextExtensionData.ytConfigData.sessionIndex"))
+
+    def _append_comments_from_items(self, items, payload_by_id):
         there_is_no_continuation_token = True
         for item in items:
             kind = list(item.keys())[0]
 
             if kind == "commentThreadRenderer":
+                replies_continuation_endpoint_key = "replies.commentRepliesRenderer.contents.0.continuationItemRenderer.continuationEndpoint"
+
+                comment_id = item[kind]["commentViewModel"]["commentViewModel"]["commentId"]
+                payload = payload_by_id[comment_id]
+
                 self.comments.append(
                     Comment.from_data(
-                        item[kind]["comment"]["commentRenderer"],
+                        payload,
                         self.post_id,
                         self.channel_id,
-                        safely_get_value_from_key(
-                            item[kind],
-                            "replies",
-                            "commentRepliesRenderer",
-                            "contents",
-                            0,
-                            "continuationItemRenderer",
-                            "continuationEndpoint",
-                            "continuationCommand",
-                            "token",
-                        ),
-                        safely_get_value_from_key(
-                            item[kind],
-                            "replies",
-                            "commentRepliesRenderer",
-                            "contents",
-                            0,
-                            "continuationItemRenderer",
-                            "continuationEndpoint",
-                            "clickTrackingParams",
-                        ),
-                        self.visitor_data,
-                        self.session_index,
+                        deep_get(item[kind], f"{replies_continuation_endpoint_key}.continuationCommand.token"),
+                        deep_get(item[kind], f"{replies_continuation_endpoint_key}.clickTrackingParams"),
+                        self._visitor_data,
+                        self._session_index,
+                        requests_handler=self._requests_handler,
                     )
                 )
             elif kind == "continuationItemRenderer":
-                self.comments_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
+                self._comments_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
                 there_is_no_continuation_token = False
 
         if there_is_no_continuation_token:
-            self.comments_continuation_token = False
+            self._comments_continuation_token = False
 
     def get_text(self):
-        runs = safely_get_value_from_key(self.content_text, "runs", default=[])
+        runs = deep_get(self.content_text, "runs", default=[])
 
         if self.content_text is not None:
             return "\n".join([run["text"] for run in runs])
@@ -241,10 +222,10 @@ class Post(object):
             return None
 
         params = [
-            b"*\x02\b\x00P\x01\xA2\x01",
+            b"*\x02\b\x00P\x01\xa2\x01",
             len(self.post_id).to_bytes(1, "big"),
             self.post_id.encode(),
-            b"\xAA\x01",
+            b"\xaa\x01",
             len(self.channel_id).to_bytes(1, "big"),
             self.channel_id.encode(),
         ]
@@ -288,52 +269,85 @@ class Post(object):
             raise e
 
     @staticmethod
-    def from_data(post_data):
-        if "sharedPostRenderer" in post_data:
-            data = post_data["sharedPostRenderer"]
-            data["contentText"] = data.pop("content")
-            data["authorText"] = data.pop("displayName")
-            data["authorEndpoint"] = data.pop("endpoint")
+    def from_post_id(post_id, requests_handler=default_requests_handler):
+        post_url = Post.POST_URL_FORMAT.format(post_id)
+        resp = requests_handler.get(post_url)
 
-            original_post_data = post_data["sharedPostRenderer"]["originalPost"]
-            data["originalPost"] = Post.from_data(original_post_data)
+        if resp.status_code != 200:
+            error(f"Could not get data from the post_id `{post_id}` using the url `{post_url}`")
 
-        elif "backstagePostRenderer" in post_data:
-            data = post_data["backstagePostRenderer"]
-        else:
-            raise NotImplementedError(f"[post_kind={list(post_data.keys())[0]} is not implemented yet!]")
+        matches = re.findall(Post.REGEX_YT_INITIAL_DATA, resp.text)
 
-        data["channelId"] = data["authorEndpoint"]["browseEndpoint"]["browseId"]
-        # clean the author cause it's different here for some reason
-        for item in data["authorText"]["runs"]:
-            item["browseEndpoint"] = item["navigationEndpoint"]["browseEndpoint"]
-            item["browseEndpoint"]["url"] = item["navigationEndpoint"]["commandMetadata"]["webCommandMetadata"]["url"]
-            item.pop("navigationEndpoint")
-        data["authorEndpoint"]["browseId"] = data["authorEndpoint"]["browseEndpoint"]["browseId"]
-        author_url = data["authorEndpoint"]["commandMetadata"]["webCommandMetadata"]["url"]
-        data["authorEndpoint"]["url"] = author_url
-        for value in ["clickTrackingParams", "commandMetadata", "browseEndpoint"]:
-            data["authorEndpoint"].pop(value)
+        if not matches:
+            error("Could not find ytInitialData")
 
-        post = Post(
-            data["postId"],
-            channel_id=data["channelId"],
-            author={
-                "authorText": safely_get_value_from_key(data, "authorText"),
-                "authorThumbnail": safely_get_value_from_key(data, "authorThumbnail"),
-                "authorEndpoint": safely_get_value_from_key(data, "authorEndpoint"),
-            },
-            content_text=clean_content_text(safely_get_value_from_key(data, "contentText")),
-            backstage_attachment=clean_backstage_attachment(safely_get_value_from_key(data, "backstageAttachment", default=None)),
-            vote_count=safely_get_value_from_key(data, "voteCount"),
-            sponsor_only_badge=safely_get_value_from_key(data, "sponsorsOnlyBadge", default=None),
-            published_time_text=safely_get_value_from_key(data, "publishedTimeText", "runs", 0, "text", default=None),
-            original_post=safely_get_value_from_key(data, "originalPost", default=None),
-        )
+        try:
+            ytInitialData = json.loads(matches[0])
+        except json.decoder.JSONDecodeError:
+            error("Could not parse json from ytInitialData")
 
-        post.raw_data = data
+        community_tab = ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]
+        community_tab_items = Post.get_items_from_community_tab(community_tab)
+
+        post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]
+
+        post = Post.from_data(post_data)
+        post._get_first_continuation_token(ytInitialData)
+        post._update_session_attributes(ytInitialData)
 
         return post
+
+    @staticmethod
+    def from_data(data, requests_handler=default_requests_handler) -> "Post":
+        post_kind = list(data.keys())[0]
+
+        if post_kind == "backstagePostRenderer":
+            return Post._from_backstage_post_renderer_data(data["backstagePostRenderer"], requests_handler)
+        elif post_kind == "sharedPostRenderer":
+            return Post._from_shared_post_renderer_data(data["sharedPostRenderer"], requests_handler)
+        else:
+            raise NotImplementedError(f"post_kind={post_kind} is not implemented")
+
+    @staticmethod
+    def _from_backstage_post_renderer_data(data, requests_handler=default_requests_handler):
+        return Post(
+            data["postId"],
+            channel_id=deep_get(data, "authorEndpoint.browseEndpoint.browseId"),
+            author={
+                "authorText": deep_get(data, "authorText"),
+                "authorThumbnail": deep_get(data, "authorThumbnail"),
+                "authorEndpoint": deep_get(data, "authorEndpoint"),
+            },
+            content_text=clean_content_text(deep_get(data, "contentText")),
+            backstage_attachment=clean_backstage_attachment(deep_get(data, "backstageAttachment")),
+            vote_count=deep_get(data, "voteCount"),
+            sponsor_only_badge=deep_get(data, "sponsorsOnlyBadge"),
+            published_time_text=deep_get(data, "publishedTimeText.runs.0.text"),
+            requests_handler=requests_handler,
+        )
+
+    @staticmethod
+    def _from_shared_post_renderer_data(data, requests_handler=default_requests_handler):
+        data["authorText"] = data["displayName"]
+        data["authorEndpoint"] = data["endpoint"]
+        data["contentText"] = data["content"]
+
+        return Post(
+            data["postId"],
+            channel_id=deep_get(data, "authorEndpoint.browseEndpoint.browseId"),
+            author={
+                "authorText": deep_get(data, "authorText"),
+                "authorThumbnail": deep_get(data, "authorThumbnail"),
+                "authorEndpoint": deep_get(data, "authorEndpoint"),
+            },
+            content_text=clean_content_text(deep_get(data, "contentText")),
+            backstage_attachment=clean_backstage_attachment(deep_get(data, "backstageAttachment")),
+            vote_count=deep_get(data, "voteCount"),
+            sponsor_only_badge=deep_get(data, "sponsorsOnlyBadge"),
+            published_time_text=deep_get(data, "publishedTimeText.runs.0.text"),
+            original_post=Post.from_data(data["originalPost"]),
+            requests_handler=requests_handler,
+        )
 
     @staticmethod
     def get_items_from_community_tab(tab):

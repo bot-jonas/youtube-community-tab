@@ -1,157 +1,143 @@
 import json
 import re
-from requests.utils import dict_from_cookiejar
-
-from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION, search_key
-from .requests_handler import requests_cache
+from .helpers.utils import deep_get, CLIENT_VERSION
+from .helpers.logger import error
+from .requests_handler import default_requests_handler
 from .post import Post
 
 
-class CommunityTab(object):
-    FORMAT_URLS = {
-        "COMMUNITY_TAB": "https://www.youtube.com/{}/{}/posts",
-        # HARD_CODED: This key seems to be constant to everyone, IDK
-        "BROWSE_ENDPOINT": "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+class CommunityTab:
+    COMMUNITY_TAB_URL_FORMATS = {
+        "CHANNEL_ID": "https://www.youtube.com/channel/{}/posts",  # UC6nSFpj9HTCZ5t-N3Rm3-HA
+        "HANDLE": "https://www.youtube.com/{}/posts",  # @Vsauce
+        "LEGACY_USERNAME": "https://www.youtube.com/c/{}/posts",  # vsauce1
     }
 
-    REGEX = {
-        "YT_INITIAL_DATA": "ytInitialData = ({(?:(?:.|\n)*)?});</script>",
-        "COMMUNITY_TAB_URL": "^\/.*\/posts$",
-    }
+    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 
-    def __init__(self, channel_name):
-        self.channel_name = channel_name
+    REGEX_YT_INITIAL_DATA = r"ytInitialData = ({(?:(?:.|\n)*)?});</script>"
 
-        self.posts_continuation_token = None
-        self.click_tracking_params = None
-        self.visitor_data = None
-        self.session_index = "0"
-        self.posts = []
-        self.community_url = None
+    def __init__(self, channel, requests_handler=default_requests_handler):
+        self.channel = channel
         self.channel_id = None
+        self.posts = []
 
-    def load_posts(self, expire_after=0):
-        headers = {"Referer": self.community_url}
+        self._requests_handler = requests_handler
+        self._community_url = self._get_community_url()
+        self._posts_continuation_token = None
 
-        # Add authorization header
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
+        self._click_tracking_params = None
+        self._visitor_data = None
+        self._session_index = "0"
 
-        if self.posts_continuation_token is None:
-            try:
-                # Get posts from community tab enpoint
-                self.community_url = CommunityTab.FORMAT_URLS["COMMUNITY_TAB"].format("c", self.channel_name)
-                r = requests_cache.get(self.community_url, expire_after=expire_after, headers=headers)
-                if r.status_code != 200:
-                    self.community_url = CommunityTab.FORMAT_URLS["COMMUNITY_TAB"].format("channel", self.channel_name)
-                    r = requests_cache.get(self.community_url, expire_after=expire_after, headers=headers)
+    def _get_community_url(self):
+        if self.channel.startswith("UC"):
+            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["CHANNEL_ID"].format(self.channel)
+        elif self.channel.startswith("@"):
+            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["HANDLE"].format(self.channel)
+        else:
+            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["LEGACY_USERNAME"].format(self.channel)
 
-                if r.status_code != 200:
-                    import sys
+    def load_posts(self):
+        if self._posts_continuation_token is None:
+            self._append_posts_from_items(self._get_initial_posts_data())
+        elif self._posts_continuation_token is not False:
+            self._append_posts_from_items(self._get_posts_data())
 
-                    print(f"[Can't get data from the channel_name: {self.channel_name}]")
-                    sys.exit()
+    def _get_initial_posts_data(self):
+        resp = self._requests_handler.get(self._community_url)
 
-                m = re.findall(CommunityTab.REGEX["YT_INITIAL_DATA"], r.text)
-                data = json.loads(m[0])
+        if resp.status_code != 200:
+            error(f"Could not get data from the channel `{self.channel}` using the url `{self._community_url}`")
 
-                if self.channel_id is None:
-                    self.channel_id = data["metadata"]["channelMetadataRenderer"]["externalId"]
+        matches = re.findall(CommunityTab.REGEX_YT_INITIAL_DATA, resp.text)
 
-            except IndexError as e:
-                print("[Can't find yt_initial_data using the regex]")
-                raise e
-            except json.decoder.JSONDecodeError as e:
-                print("[Can't parse yt_initial_data from the regex]")
-                raise e
-            except Exception as e:
-                print("[Some non-expected exception, probably caused by requests...]")
-                raise e
+        if not matches:
+            error("Could not find ytInitialData")
 
-            tabs = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"]
-            community_tab = CommunityTab.get_community_tab(tabs)
-            community_tab_items = CommunityTab.get_items_from_community_tab(community_tab)
+        try:
+            ytInitialData = json.loads(matches[0])
+        except json.decoder.JSONDecodeError:
+            error("Could not parse json from ytInitialData")
 
-            self.click_tracking_params = CommunityTab.get_click_tracking_params_from_community_tab(community_tab)
-            self.visitor_data = data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-            self.session_index = str(
-                safely_get_value_from_key(data["responseContext"]["webResponseContextExtensionData"]["ytConfigData"], "sessionIndex", default="")
-            )
-            self.append_posts_from_items(community_tab_items)
-        elif self.posts_continuation_token is not False:
-            headers.update(
-                {
-                    "X-Goog-AuthUser": self.session_index,
-                    "X-Origin": "https://www.youtube.com",
-                    "X-Youtube-Client-Name": "1",
-                    "X-Youtube-Client-Version": CLIENT_VERSION,
+        community_tab = self._get_community_tab(ytInitialData)
+
+        # Update attributes
+        self.channel_id = ytInitialData["metadata"]["channelMetadataRenderer"]["externalId"]
+        self._update_session_attributes(community_tab, ytInitialData)
+
+        return self._get_posts_data_from_community_tab(community_tab)
+
+    def _get_posts_data(self):
+        headers = {
+            "X-Goog-AuthUser": self._session_index,
+            "X-Origin": "https://www.youtube.com",
+            "X-Youtube-Client-Name": "1",
+            "X-Youtube-Client-Version": CLIENT_VERSION,
+        }
+
+        body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": CLIENT_VERSION,
+                    "originalUrl": self._community_url,
+                    "visitorData": self._visitor_data,
                 }
-            )
+            },
+            "continuation": self._posts_continuation_token,
+            "clickTracking": {
+                "clickTrackingParams": self._click_tracking_params,
+            },
+        }
 
-            json_body = {
-                "context": {
-                    "client": {"clientName": "WEB", "clientVersion": CLIENT_VERSION, "originalUrl": self.community_url, "visitorData": self.visitor_data}
-                },
-                "continuation": self.posts_continuation_token,
-                "clickTracking": {"clickTrackingParams": self.click_tracking_params},
-            }
+        resp = self._requests_handler.post(CommunityTab.BROWSE_ENDPOINT, json=body, headers=headers)
+        data = resp.json()
 
-            r = requests_cache.post(CommunityTab.FORMAT_URLS["BROWSE_ENDPOINT"], json=json_body, expire_after=expire_after, headers=headers)
+        posts_data = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
+        self._click_tracking_params = data["onResponseReceivedEndpoints"][0]["clickTrackingParams"]
 
-            data = r.json()
-            append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
-            self.click_tracking_params = data["onResponseReceivedEndpoints"][0]["clickTrackingParams"]
-            self.append_posts_from_items(safely_get_value_from_key(append, "continuationItems", default=[]))
+        return posts_data
 
-    def append_posts_from_items(self, items):
+    def _append_posts_from_items(self, items):
         there_is_no_continuation_token = True
+
         for item in items:
             kind = list(item.keys())[0]
 
             if kind == "backstagePostThreadRenderer":
-                post_kind = list(item[kind]["post"].keys())[0]
-                if post_kind == "backstagePostRenderer":
-                    post_data = item[kind]["post"]["backstagePostRenderer"]
-                    post_data["channelId"] = self.channel_id
-                    self.posts.append(Post.from_data(post_data))
-                elif post_kind == "sharedPostRenderer":
-                    # TODO: parse data from item[kind]["post"]["sharedPostRenderer"]["originalPost"]["backstagePostRenderer"]
-                    post_data = item[kind]["post"]["sharedPostRenderer"]
-                    post_data["channelId"] = self.channel_id
-                    post_data["authorText"] = post_data["displayName"]
-                    post_data["authorEndpoint"] = post_data["endpoint"]
-                    post_data.pop("displayName")
-                    post_data.pop("endpoint")
-                    self.posts.append(Post.from_data(post_data))
-                else:
-                    raise Exception(f"[post_kind={post_kind} is not implemented yet!]")
+                self.posts.append(Post.from_data(item[kind]["post"], requests_handler=self._requests_handler))
             elif kind == "continuationItemRenderer":
-                self.posts_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
+                self._posts_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
                 there_is_no_continuation_token = False
 
         if there_is_no_continuation_token:
-            self.posts_continuation_token = False
+            self._posts_continuation_token = False
 
-    @staticmethod
-    def get_community_tab(tabs):
-        for tab in tabs:
-            if "tabRenderer" in tab and re.match(CommunityTab.REGEX["COMMUNITY_TAB_URL"], tab["tabRenderer"]["endpoint"]["commandMetadata"]["webCommandMetadata"]["url"]):
+    def _get_community_tab(self, ytInitialData):
+        for tab in ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"]:
+            url = deep_get(tab, "tabRenderer.endpoint.commandMetadata.webCommandMetadata.url", default="")
+
+            if url.endswith("/posts"):
                 return tab
-        raise Exception("[Could not find a Community tab in the channel response]")
 
-    @staticmethod
-    def get_items_from_community_tab(tab):
-        try:
-            return tab["tabRenderer"]["content"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"]
-        except Exception as e:
-            print("[Can't get the contents from the tab]")
-            raise e
+        error("Could not find community tab in the ytInitialData")
 
-    @staticmethod
-    def get_click_tracking_params_from_community_tab(tab):
+    def _get_posts_data_from_community_tab(self, community_tab):
         try:
-            return tab["tabRenderer"]["content"]["sectionListRenderer"]["trackingParams"]
-        except Exception as e:
-            print("[Can't get tracking params from the tab]")
-            raise e
+            return community_tab["tabRenderer"]["content"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"]
+        except KeyError:
+            error("Could not get the contents from the community tab")
+
+    def _update_session_attributes(self, community_tab, ytInitialData):
+        try:
+            self._click_tracking_params = community_tab["tabRenderer"]["content"]["sectionListRenderer"]["trackingParams"]
+        except KeyError:
+            error("Could not get the click tracking params from the community tab")
+
+        try:
+            self._visitor_data = ytInitialData["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
+        except KeyError:
+            error("Could not get the visitor data from the ytInitialData")
+
+        self._session_index = str(deep_get(ytInitialData, "responseContext.webResponseContextExtensionData.ytConfigData.sessionIndex", default=""))

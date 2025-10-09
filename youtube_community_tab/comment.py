@@ -2,20 +2,19 @@ import json
 from requests.utils import dict_from_cookiejar
 from base64 import urlsafe_b64encode
 
-from .requests_handler import requests_cache
-from .helpers.utils import safely_get_value_from_key, get_auth_header, CLIENT_VERSION
-from .reply import Reply
+from .helpers.utils import deep_get, CLIENT_VERSION
+from .requests_handler import default_requests_handler
 
 
 class Comment(object):
-    FORMAT_URLS = {
-        "POST": "https://www.youtube.com/post/{}",
-        # HARD_CODED: This key seems to be constant to everyone, IDK
-        "BROWSE_ENDPOINT": "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        "UPDATE_COMMENT_ENDPOINT": "https://www.youtube.com/youtubei/v1/comment/update_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
-        "PERFORM_COMMENT_ACTION_ENDPOINT": "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
-        "FIXED_COMMENT": "https://www.youtube.com/channel/{}/community?lc={}&lb={}",
-    }
+    POST_FORMAT_URL = "https://www.youtube.com/post/{}"
+    FIXED_COMMENT_FORMAT_URL = "https://www.youtube.com/post/{}?lc={}"
+
+    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+    UPDATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/update_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
+    PERFORM_COMMENT_ACTION_ENDPOINT = (
+        "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
+    )
 
     def __init__(
         self,
@@ -29,6 +28,7 @@ class Comment(object):
         click_tracking_params=None,
         visitor_data=None,
         session_index="0",
+        requests_handler=default_requests_handler,
     ):
         self.post_id = post_id
         self.comment_id = comment_id
@@ -36,11 +36,14 @@ class Comment(object):
         self.author = author
         self.content_text = content_text
         self.vote_count = vote_count
-        self.replies_continuation_token = replies_continuation_token
-        self.click_tracking_params = click_tracking_params
-        self.visitor_data = visitor_data
-        self.session_index = session_index
         self.replies = []
+
+        self._requests_handler = requests_handler
+        self._replies_continuation_token = replies_continuation_token
+
+        self._click_tracking_params = click_tracking_params
+        self._visitor_data = visitor_data
+        self._session_index = session_index
 
     def as_json(self):
         return {
@@ -59,87 +62,81 @@ class Comment(object):
         return self.__str__()
 
     def get_text(self):
-        if self.content_text is not None:
-            return "".join([run["text"] for run in self.content_text["runs"]])
-        return None
+        return self.content_text
 
-    def load_replies(self, expire_after=0):
-        headers = {
-            "x-origin": "https://www.youtube.com",
-            "Referer": Comment.FORMAT_URLS["POST"].format(self.post_id),
-        }
+    def load_replies(self):
+        if self._replies_continuation_token:
+            headers = {
+                "X-Goog-AuthUser": self._session_index,
+                "X-Origin": "https://www.youtube.com",
+                "X-Youtube-Client-Name": "1",
+                "X-Youtube-Client-Version": CLIENT_VERSION,
+            }
 
-        # Add authorization header
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
-
-        if self.replies_continuation_token:
-            headers.update(
-                {
-                    "X-Goog-AuthUser": self.session_index,
-                    "X-Origin": "https://www.youtube.com",
-                    "X-Youtube-Client-Name": "1",
-                    "X-Youtube-Client-Version": CLIENT_VERSION,
-                }
-            )
-
-            json_body = {
+            body = {
                 "context": {
                     "client": {
                         "clientName": "WEB",
                         "clientVersion": CLIENT_VERSION,
-                        "originalUrl": Comment.FORMAT_URLS["POST"].format(self.post_id),
-                        "visitorData": self.visitor_data,
-                    }
+                        "originalUrl": Comment.POST_FORMAT_URL.format(self.post_id),
+                        "visitorData": self._visitor_data,
+                    },
                 },
-                "continuation": self.replies_continuation_token,
-                "clickTracking": {"clickTrackingParams": self.click_tracking_params},
+                "continuation": self._replies_continuation_token,
+                "clickTracking": {"clickTrackingParams": self._click_tracking_params},
             }
 
-            r = requests_cache.post(
-                Comment.FORMAT_URLS["BROWSE_ENDPOINT"],
-                json=json_body,
-                expire_after=expire_after,
-                headers=headers,
-            )
+            resp = self._requests_handler.post(Comment.BROWSE_ENDPOINT, json=body, headers=headers)
+            data = resp.json()
 
-            data = r.json()
-            append = safely_get_value_from_key(
-                data,
-                "onResponseReceivedEndpoints",
-                0,
-                "appendContinuationItemsAction",
-                default=[],
-            )
-            self.click_tracking_params = data["trackingParams"]
-            continuation_items = safely_get_value_from_key(
-                append, "continuationItems", default=[]
-            )
+            mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
+            payload_by_id = {}
+            for mutation in mutations:
+                payload = mutation["payload"]
 
-            self.append_replies_from_items(continuation_items)
+                if "commentEntityPayload" not in payload:
+                    continue
 
-    def append_replies_from_items(self, items):
+                payload = payload["commentEntityPayload"]
+                comment_id = payload["properties"]["commentId"]
+
+                payload_by_id[comment_id] = payload
+
+            self._click_tracking_params = data["trackingParams"]
+            continuation_items = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
+
+            self._append_replies_from_items(continuation_items, payload_by_id)
+
+    def _append_replies_from_items(self, items, payload_by_id):
         there_is_no_continuation_token = True
+
         for item in items:
             kind = list(item.keys())[0]
 
-            if kind == "commentRenderer":
-                self.replies.append(Reply.from_data(item[kind]))
+            if kind == "commentViewModel":
+                reply_id = item[kind]["commentId"]
+                self.replies.append(
+                    Comment.from_data(
+                        payload_by_id[reply_id],
+                        self.post_id,
+                        self.channel_id,
+                        replies_continuation_token=None,
+                        click_tracking_params=self._click_tracking_params,
+                        visitor_data=self._visitor_data,
+                        session_index=self._session_index,
+                        requests_handler=self._requests_handler,
+                    )
+                )
             elif kind == "continuationItemRenderer":
                 if "continuationEndpoint" in item[kind]:
-                    self.replies_continuation_token = item[kind][
-                        "continuationEndpoint"
-                    ]["continuationCommand"]["token"]
+                    self._replies_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
                     there_is_no_continuation_token = False
                 elif "button" in item[kind]:
-                    self.replies_continuation_token = item[kind]["button"][
-                        "buttonRenderer"
-                    ]["command"]["continuationCommand"]["token"]
+                    self._replies_continuation_token = item[kind]["button"]["buttonRenderer"]["command"]["continuationCommand"]["token"]
                     there_is_no_continuation_token = False
 
         if there_is_no_continuation_token:
-            self.replies_continuation_token = False
+            self._replies_continuation_token = False
 
     @staticmethod
     def from_data(
@@ -150,35 +147,27 @@ class Comment(object):
         click_tracking_params,
         visitor_data,
         session_index,
+        requests_handler=default_requests_handler,
     ):
-        comment = Comment(
+        return Comment(
             post_id,
-            data["commentId"],
+            data["properties"]["commentId"],
             channel_id=channel_id,
-            content_text=safely_get_value_from_key(data, "contentText"),
+            content_text=deep_get(data, "properties.content.content"),
             author={
-                "authorText": safely_get_value_from_key(data, "authorText"),
-                "authorThumbnail": safely_get_value_from_key(data, "authorThumbnail"),
-                "authorEndpoint": safely_get_value_from_key(
-                    data, "authorEndpoint", "browseEndpoint"
-                ),
-                "authorIsChannelOwner": safely_get_value_from_key(
-                    data, "authorIsChannelOwner"
-                ),
-                "sponsorCommentBadge": safely_get_value_from_key(
-                    data, "sponsorCommentBadge"
-                ),
+                "displayName": deep_get(data, "author.displayName"),
+                "authorThumbnail": deep_get(data, "author.avatarThumbnailUrl"),
+                # "authorEndpoint": deep_get(data, "authorEndpoint", "browseEndpoint"),
+                # "authorIsChannelOwner": deep_get(data, "authorIsChannelOwner"),
+                # "sponsorCommentBadge": deep_get(data, "sponsorCommentBadge"),
             },
-            vote_count=safely_get_value_from_key(data, "voteCount"),
+            # vote_count=deep_get(data, "voteCount"),
             replies_continuation_token=replies_continuation_token,
             click_tracking_params=click_tracking_params,
             visitor_data=visitor_data,
             session_index=session_index,
+            requests_handler=requests_handler,
         )
-
-        comment.raw_data = data
-
-        return comment
 
     @staticmethod
     def get_fixed_comment_params(comment_id, post_id, channel_id):
@@ -226,23 +215,12 @@ class Comment(object):
         return params
 
     @staticmethod
-    def from_ids(comment_id, post_id, channel_id, expire_after=0):
-        fixed_comment_url = Comment.FORMAT_URLS["FIXED_COMMENT"].format(
-            channel_id, comment_id, post_id
-        )
-        headers = {
-            "x-origin": "https://www.youtube.com",
-            "Referer": fixed_comment_url,
-        }
-
-        # Add authorization header
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
+    def from_ids(comment_id, post_id, channel_id, requests_handler=default_requests_handler):
+        fixed_comment_url = Comment.FIXED_COMMENT_FORMAT_URL.format(post_id, comment_id)
 
         c = Comment.get_fixed_comment_params(comment_id, post_id, channel_id)
 
-        json_body = {
+        body = {
             "context": {
                 "client": {
                     "clientName": "WEB",
@@ -253,15 +231,11 @@ class Comment(object):
             "continuation": c,
         }
 
-        r = requests_cache.post(
-            Comment.FORMAT_URLS["BROWSE_ENDPOINT"],
-            json=json_body,
-            expire_after=expire_after,
-            headers=headers,
-        )
+        resp = requests_handler.post(fixed_comment_url, json=body)
+        print(fixed_comment_url)
 
-        comment_data = safely_get_value_from_key(
-            r.json(),
+        comment_data = deep_get(
+            resp.json(),
             "onResponseReceivedEndpoints",
             1,
             "reloadContinuationItemsCommand",
@@ -275,7 +249,7 @@ class Comment(object):
                 comment_data["comment"]["commentRenderer"],
                 post_id,
                 channel_id,
-                safely_get_value_from_key(
+                deep_get(
                     comment_data,
                     "replies",
                     "commentRepliesRenderer",
@@ -286,7 +260,7 @@ class Comment(object):
                     "continuationCommand",
                     "token",
                 ),
-                safely_get_value_from_key(
+                deep_get(
                     comment_data,
                     "replies",
                     "commentRepliesRenderer",
@@ -335,9 +309,7 @@ class Comment(object):
         channel_id=None,
     ):
         if update_comment_params is None:
-            update_comment_params = Comment.get_update_comment_params(
-                comment_id, post_id, channel_id
-            )
+            update_comment_params = Comment.get_update_comment_params(comment_id, post_id, channel_id)
 
         headers = {
             "x-origin": "https://www.youtube.com",
@@ -386,18 +358,12 @@ class Comment(object):
         return params
 
     def delete_comment(self):
-        return Comment._delete_comment(
-            comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id
-        )
+        return Comment._delete_comment(comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
 
     @staticmethod
-    def _delete_comment(
-        delete_comment_params=None, comment_id=None, post_id=None, channel_id=None
-    ):
+    def _delete_comment(delete_comment_params=None, comment_id=None, post_id=None, channel_id=None):
         if delete_comment_params is None:
-            delete_comment_params = Comment.get_delete_comment_params(
-                comment_id, post_id, channel_id
-            )
+            delete_comment_params = Comment.get_delete_comment_params(comment_id, post_id, channel_id)
 
         return Comment.perform_action(delete_comment_params)
 
@@ -439,9 +405,7 @@ class Comment(object):
         channel_id=None,
     ):
         if dislike_comment_params is None:
-            dislike_comment_params = Comment.get_dislike_comment_params(
-                value, comment_id, post_id, channel_id
-            )
+            dislike_comment_params = Comment.get_dislike_comment_params(value, comment_id, post_id, channel_id)
 
         return Comment.perform_action(dislike_comment_params)
 
@@ -475,13 +439,9 @@ class Comment(object):
         )
 
     @staticmethod
-    def _set_like_comment(
-        value, like_comment_params=None, comment_id=None, post_id=None, channel_id=None
-    ):
+    def _set_like_comment(value, like_comment_params=None, comment_id=None, post_id=None, channel_id=None):
         if like_comment_params is None:
-            like_comment_params = Comment.get_like_comment_params(
-                value, comment_id, post_id, channel_id
-            )
+            like_comment_params = Comment.get_like_comment_params(value, comment_id, post_id, channel_id)
 
         return Comment.perform_action(like_comment_params)
 
