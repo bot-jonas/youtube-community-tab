@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+// NOTE: To generate the exact youtube key, the action_variant must be marked as required for action in (LIKE, DISLIKE)
+// and must be removed for action in (ADD_HEART, REMOVE_HEART, DELETE)
+// However, marking this field as optional generate valid keys
+message PerformCommentActionParams {
+	required int32 action = 1; // LIKE: 5, DISLIKE: 4, ADD_HEART: 14, REMOVE_HEART: 15, DELETE: 6
+	required int32 int1 = 2; // 7
+	required string comment_id = 3;
+	required int32 int2 = 6; // 0
+	optional int32 action_variant = 7; // (LIKE, ADD): 0, (LIKE, REMOVE): 1, (DISLIKE, ADD): 0, (DISLIKE, REMOVE): 1
+	required int32 int3 = 21; // 1
+	required string post_id = 22;
+	required string channel_id = 23;
+	required int32 int4 = 30; // 0
+	required int32 int5 = 47; // 1
+}

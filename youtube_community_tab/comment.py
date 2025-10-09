@@ -1,10 +1,10 @@
 import json
-from requests.utils import dict_from_cookiejar
-from base64 import urlsafe_b64encode
-
 from .helpers.utils import deep_get, CLIENT_VERSION
 from .requests_handler import default_requests_handler
 from .protobuf.keys.fixed_comment_params import fixed_comment_params
+from .protobuf.keys.perform_comment_action_params import perform_comment_action_params, CommentAction
+from .protobuf.keys.update_comment_params import update_comment_params
+from .helpers.logger import error
 
 
 class Comment(object):
@@ -12,10 +12,8 @@ class Comment(object):
     FIXED_COMMENT_FORMAT_URL = "https://www.youtube.com/post/{}?lc={}"
 
     BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"
-    UPDATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/update_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
-    PERFORM_COMMENT_ACTION_ENDPOINT = (
-        "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
-    )
+    UPDATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/update_comment?prettyPrint=false"
+    PERFORM_COMMENT_ACTION_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?prettyPrint=false"
 
     def __init__(
         self,
@@ -196,6 +194,7 @@ class Comment(object):
             payload = mutation["payload"]
 
             if "commentEntityPayload" not in payload:
+                payload = None
                 continue
 
             payload = payload["commentEntityPayload"]
@@ -219,188 +218,63 @@ class Comment(object):
                 requests_handler=requests_handler,
             )
 
-    @staticmethod
-    def get_update_comment_params(comment_id, post_id, channel_id):
-        params = [
-            b"\n",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"*\x02\b\x00@\x01R",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"Z",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
-    def update_comment(self, comment_text):
-        return Comment._update_comment(
-            comment_text,
-            comment_id=self.comment_id,
-            post_id=self.post_id,
-            channel_id=self.channel_id,
-        )
-
-    @staticmethod
-    def _update_comment(
-        comment_text,
-        update_comment_params=None,
-        comment_id=None,
-        post_id=None,
-        channel_id=None,
-    ):
-        if update_comment_params is None:
-            update_comment_params = Comment.get_update_comment_params(comment_id, post_id, channel_id)
-
+    def update(self, comment_text):
         headers = {
             "x-origin": "https://www.youtube.com",
         }
 
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
-
-        json_body = {
+        body = {
             "context": {
                 "client": {
                     "clientName": "WEB",
                     "clientVersion": CLIENT_VERSION,
                 },
             },
-            "updateCommentParams": update_comment_params,
+            "updateCommentParams": update_comment_params(self.comment_id, self.post_id, self.channel_id),
             "commentText": comment_text,
         }
 
-        r = requests_cache.post(
-            Comment.FORMAT_URLS["UPDATE_COMMENT_ENDPOINT"],
-            json=json_body,
-            headers=headers,
+        resp = self._requests_handler.post(Comment.UPDATE_COMMENT_ENDPOINT, json=body, headers=headers)
+        data = resp.json()
+
+        status = deep_get(data, "actions.0.updateCommentAction.actionResult.status")
+
+        return status == "STATUS_SUCCEEDED"
+
+    def add_like(self):
+        return self._perform_action(CommentAction.ADD_LIKE)
+
+    def remove_like(self):
+        return self._perform_action(CommentAction.REMOVE_LIKE)
+
+    def add_dislike(self):
+        return self._perform_action(CommentAction.ADD_DISLIKE)
+
+    def remove_dislike(self):
+        return self._perform_action(CommentAction.REMOVE_DISLIKE)
+
+    def add_heart(self):
+        return self._perform_action(CommentAction.ADD_HEART)
+
+    def remove_heart(self):
+        return self._perform_action(CommentAction.REMOVE_HEART)
+
+    def delete(self):
+        return self._perform_action(CommentAction.DELETE)
+
+    def _perform_action(self, action):
+        action_params = perform_comment_action_params(
+            self.comment_id,
+            self.post_id,
+            self.channel_id,
+            action,
         )
 
-        return r.json()
-
-    @staticmethod
-    def get_delete_comment_params(comment_id, post_id, channel_id):
-        params = [
-            b"\b\x06\x10\x07\x1a",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"0\x00J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"\xba\x01",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-            b"\xf0\x01\x01",
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
-    def delete_comment(self):
-        return Comment._delete_comment(comment_id=self.comment_id, post_id=self.post_id, channel_id=self.channel_id)
-
-    @staticmethod
-    def _delete_comment(delete_comment_params=None, comment_id=None, post_id=None, channel_id=None):
-        if delete_comment_params is None:
-            delete_comment_params = Comment.get_delete_comment_params(comment_id, post_id, channel_id)
-
-        return Comment.perform_action(delete_comment_params)
-
-    @staticmethod
-    def get_dislike_comment_params(value, comment_id, post_id, channel_id):
-        params = [
-            b"\b\x04\x10\x07\x1a",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"0\x008",
-            (not value).to_bytes(1, "big"),
-            b"J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"\xba\x01",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-            b"\xf0\x01\x01",
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
-    def set_dislike_comment(self, value=True):
-        return Comment._set_dislike_comment(
-            value,
-            comment_id=self.comment_id,
-            post_id=self.post_id,
-            channel_id=self.channel_id,
-        )
-
-    @staticmethod
-    def _set_dislike_comment(
-        value,
-        dislike_comment_params=None,
-        comment_id=None,
-        post_id=None,
-        channel_id=None,
-    ):
-        if dislike_comment_params is None:
-            dislike_comment_params = Comment.get_dislike_comment_params(value, comment_id, post_id, channel_id)
-
-        return Comment.perform_action(dislike_comment_params)
-
-    @staticmethod
-    def get_like_comment_params(value, comment_id, post_id, channel_id):
-        params = [
-            b"\b\x05\x10\x07\x1a",
-            len(comment_id).to_bytes(1, "big"),
-            comment_id.encode(),
-            b"0\x008",
-            (not value).to_bytes(1, "big"),
-            b"J\x15115587043600121621724P\x00\xa8\x01\x01\xb2\x01",
-            len(post_id).to_bytes(1, "big"),
-            post_id.encode(),
-            b"\xba\x01",
-            len(channel_id).to_bytes(1, "big"),
-            channel_id.encode(),
-            b"\xf0\x01\x01",
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
-    def set_like_comment(self, value=True):
-        return Comment._set_like_comment(
-            value,
-            comment_id=self.comment_id,
-            post_id=self.post_id,
-            channel_id=self.channel_id,
-        )
-
-    @staticmethod
-    def _set_like_comment(value, like_comment_params=None, comment_id=None, post_id=None, channel_id=None):
-        if like_comment_params is None:
-            like_comment_params = Comment.get_like_comment_params(value, comment_id, post_id, channel_id)
-
-        return Comment.perform_action(like_comment_params)
-
-    @staticmethod
-    def perform_action(action_params):
         headers = {
             "x-origin": "https://www.youtube.com",
         }
 
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
-
-        json_body = {
+        body = {
             "context": {
                 "client": {
                     "clientName": "WEB",
@@ -412,10 +286,19 @@ class Comment(object):
             ],
         }
 
-        r = requests_cache.post(
-            Comment.FORMAT_URLS["PERFORM_COMMENT_ACTION_ENDPOINT"],
-            json=json_body,
-            headers=headers,
-        )
+        resp = self._requests_handler.post(Comment.PERFORM_COMMENT_ACTION_ENDPOINT, json=body, headers=headers)
 
-        return r.json()
+        if resp.status_code != 200:
+            error("Could not perform the action")
+
+        try:
+            data = resp.json()
+        except json.decoder.JSONDecodeError:
+            error("Could not parse json")
+
+        if action == CommentAction.DELETE:
+            status = deep_get(data, "actions.0.removeCommentAction.actionResult.status")
+        else:
+            status = deep_get(data, "actionResults.0.status")
+
+        return status == "STATUS_SUCCEEDED"
