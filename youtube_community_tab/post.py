@@ -1,19 +1,18 @@
 import json
 import re
-from requests.utils import dict_from_cookiejar
-from base64 import urlsafe_b64encode
 
 from .helpers.clean_items import clean_content_text, clean_backstage_attachment
-from .helpers.utils import deep_get, CLIENT_VERSION, search_key
+from .helpers.utils import deep_get, CLIENT_VERSION
 from .helpers.logger import error
 from .requests_handler import default_requests_handler
 from .comment import Comment
+from .protobuf.keys.create_comment_params import create_comment_params
 
 
 class Post(object):
     POST_URL_FORMAT = "https://www.youtube.com/post/{}"
-    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-    CREATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/create_comment?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false"
+    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse"
+    CREATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/create_comment?prettyPrint=false"
     REGEX_YT_INITIAL_DATA = r"ytInitialData = ({(?:(?:.|\n)*)?});</script>"
 
     def __init__(
@@ -217,56 +216,43 @@ class Post(object):
     def get_published_string(self):
         return self.published_time_text
 
-    def get_create_comment_params(self):
-        if self.channel_id is None or self.post_id is None:
-            return None
-
-        params = [
-            b"*\x02\b\x00P\x01\xa2\x01",
-            len(self.post_id).to_bytes(1, "big"),
-            self.post_id.encode(),
-            b"\xaa\x01",
-            len(self.channel_id).to_bytes(1, "big"),
-            self.channel_id.encode(),
-        ]
-
-        params = urlsafe_b64encode(b"".join(params)).decode().replace("=", "%3D")
-
-        return params
-
     def create_comment(self, comment_text):
         headers = {
             "x-origin": "https://www.youtube.com",
         }
 
-        current_cookies = dict_from_cookiejar(requests_cache.cookies)
-        if "SAPISID" in current_cookies:
-            headers["Authorization"] = get_auth_header(current_cookies["SAPISID"])
-
-        json_body = {
+        body = {
             "context": {
                 "client": {
                     "clientName": "WEB",
                     "clientVersion": CLIENT_VERSION,
                 },
             },
-            "createCommentParams": self.get_create_comment_params(),
+            "createCommentParams": create_comment_params(self.post_id, self.channel_id),
             "commentText": comment_text,
         }
 
-        r = requests_cache.post(
-            Post.FORMAT_URLS["CREATE_COMMENT_ENDPOINT"],
-            json=json_body,
-            headers=headers,
-        )
+        resp = self._requests_handler.post(Post.CREATE_COMMENT_ENDPOINT, json=body, headers=headers)
+
+        if resp.status_code != 200:
+            error("It was not possible to create the comment")
 
         try:
-            data = r.json()
-            comment_id = search_key("comment", data)[0][1]["commentRenderer"]["commentId"]
+            data = resp.json()
+        except json.decoder.JSONDecodeError:
+            error("Could not parse json")
 
-            return Comment.from_ids(comment_id, self.post_id, self.channel_id)
-        except Exception as e:
-            raise e
+        status = deep_get(data, "actionResult.status")
+
+        if status != "STATUS_SUCCEEDED":
+            error(f"The status returned was {status} != STATUS_SUCCEEDED")
+
+        comment_id = deep_get(data, "actions.0.runAttestationCommand.ids.0.commentId")
+
+        if comment_id is None:
+            error("Could not recover the comment_id")
+
+        return Comment.from_ids(comment_id, self.post_id, self.channel_id)
 
     @staticmethod
     def from_post_id(post_id, requests_handler=default_requests_handler):

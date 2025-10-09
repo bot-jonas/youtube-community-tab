@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+message CreateCommentParams {
+  required Msg1 msg1 = 5;
+
+  message Msg1 {
+    required int32 int1 = 1; // 0
+  }
+
+  required int32 int2 = 10; // 1
+  required string post_id = 20;
+  required string channel_id = 21;
+  required int32 int3 = 45; // 1
+}
