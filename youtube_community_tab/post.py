@@ -6,6 +6,7 @@ from .helpers.logger import error
 from .requests_handler import default_requests_handler
 from .comment import Comment
 from .protobuf.keys.create_comment_params import create_comment_params
+from .protobuf.keys.fixed_comment_params import fixed_comment_params
 from .constants import (
     POST_URL_FORMAT,
     REGEX_YT_INITIAL_DATA,
@@ -19,7 +20,7 @@ class Post(object):
     def __init__(
         self,
         post_id,
-        channel_id=None,
+        channel_id,
         author=None,
         content_text=None,
         backstage_attachment=None,
@@ -43,7 +44,7 @@ class Post(object):
         self._requests_handler = requests_handler
         self._post_url = POST_URL_FORMAT.format(post_id=self.post_id)
         self._first = True
-        self._comments_continuation_token = None
+        self._comments_continuation_token = fixed_comment_params(self.channel_id, self.post_id)
 
         self._click_tracking_params = None
         self._visitor_data = None
@@ -90,79 +91,60 @@ class Post(object):
         return thumbnails
 
     def load_comments(self):
-        if self._comments_continuation_token is None:
-            resp = self._requests_handler.get(self._post_url)
+        if self._comments_continuation_token is False:
+            return
 
-            if resp.status_code != 200:
-                error(f"Could not get data from the post_id `{self.post_id}` using the url `{self._post_url}`")
+        headers = {
+            "X-Goog-AuthUser": self._session_index,
+            "X-Origin": "https://www.youtube.com",
+            "X-Youtube-Client-Name": "1",
+            "X-Youtube-Client-Version": CLIENT_VERSION,
+        }
 
-            matches = re.findall(REGEX_YT_INITIAL_DATA, resp.text)
+        body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": CLIENT_VERSION,
+                    "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
+                    "visitorData": self._visitor_data,
+                }
+            },
+            "continuation": self._comments_continuation_token,
+            "clickTracking": {"clickTrackingParams": self._click_tracking_params},
+        }
 
-            if not matches:
-                error("Could not find ytInitialData")
+        resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
+        data = resp.json()
 
-            try:
-                ytInitialData = json.loads(matches[0])
-            except json.decoder.JSONDecodeError:
-                error("Could not parse json from ytInitialData")
+        mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
+        payload_by_id = {}
+        for mutation in mutations:
+            payload = mutation["payload"]
 
-            self._get_first_continuation_token(ytInitialData)
+            if "commentEntityPayload" not in payload:
+                continue
 
-            self._update_session_attributes(ytInitialData)
+            payload = payload["commentEntityPayload"]
+            comment_id = payload["properties"]["commentId"]
 
-            self.load_comments()
-        elif self._comments_continuation_token is not False:
-            headers = {
-                "X-Goog-AuthUser": self._session_index,
-                "X-Origin": "https://www.youtube.com",
-                "X-Youtube-Client-Name": "1",
-                "X-Youtube-Client-Version": CLIENT_VERSION,
-            }
+            payload_by_id[comment_id] = payload
 
-            body = {
-                "context": {
-                    "client": {
-                        "clientName": "WEB",
-                        "clientVersion": CLIENT_VERSION,
-                        "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
-                        "visitorData": self._visitor_data,
-                    }
-                },
-                "continuation": self._comments_continuation_token,
-                "clickTracking": {"clickTrackingParams": self._click_tracking_params},
-            }
-
-            resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
-            data = resp.json()
-
-            mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
-            payload_by_id = {}
-            for mutation in mutations:
-                payload = mutation["payload"]
-
-                if "commentEntityPayload" not in payload:
-                    continue
-
-                payload = payload["commentEntityPayload"]
-                comment_id = payload["properties"]["commentId"]
-
-                payload_by_id[comment_id] = payload
-
-            if self._first:
-                if "continuationItems" not in data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]:
-                    # There are no comments
-                    continuation_items = []
-                else:
-                    append = data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]
-                    continuation_items = deep_get(append, "continuationItems", default=[])
-                    self._first = False
+        if self._first:
+            if "continuationItems" not in data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]:
+                # There are no comments
+                continuation_items = []
             else:
-                append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
+                append = data["onResponseReceivedEndpoints"][1]["reloadContinuationItemsCommand"]
                 continuation_items = deep_get(append, "continuationItems", default=[])
+                self._first = False
+        else:
+            append = data["onResponseReceivedEndpoints"][0]["appendContinuationItemsAction"]
+            continuation_items = deep_get(append, "continuationItems", default=[])
 
-            self._click_tracking_params = data["trackingParams"]
+        self._click_tracking_params = data["trackingParams"]
 
-            self._append_comments_from_items(continuation_items, payload_by_id)
+        self._append_comments_from_items(continuation_items, payload_by_id)
 
     def _get_first_continuation_token(self, ytInitialData):
         self._comments_continuation_token = ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"][

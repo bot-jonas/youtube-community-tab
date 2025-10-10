@@ -173,7 +173,7 @@ class Comment(object):
     def from_ids(comment_id, post_id, channel_id, requests_handler=default_requests_handler):
         fixed_comment_url = FIXED_COMMENT_URL_FORMAT.format(post_id=post_id, comment_id=comment_id)
 
-        c = fixed_comment_params(comment_id, post_id, channel_id)
+        c = fixed_comment_params(channel_id, post_id, comment_id)
 
         body = {
             "context": {

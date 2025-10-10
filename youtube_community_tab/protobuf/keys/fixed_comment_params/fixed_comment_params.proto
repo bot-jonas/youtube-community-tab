@@ -23,7 +23,7 @@ message InnerFixedCommentParams {
 
     message Msg4 {
       required int32 int1 = 6; // 0
-      required string comment_id = 16;
+      optional string comment_id = 16;
       required int32 int2 = 27; // 1
       required string post_id = 29;
       required string channel_id = 30;
@@ -32,7 +32,7 @@ message InnerFixedCommentParams {
     message Msg3 {
       required string channel_id = 2;
       required string post_id = 3;
-      required string comment_id = 8;
+      optional string comment_id = 8;
       required string channel_id2 = 11;
     }
   }
