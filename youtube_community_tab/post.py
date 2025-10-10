@@ -1,20 +1,21 @@
 import json
 import re
-
 from .helpers.clean_items import clean_content_text, clean_backstage_attachment
-from .helpers.utils import deep_get, CLIENT_VERSION
+from .helpers.utils import deep_get
 from .helpers.logger import error
 from .requests_handler import default_requests_handler
 from .comment import Comment
 from .protobuf.keys.create_comment_params import create_comment_params
+from .constants import (
+    POST_URL_FORMAT,
+    REGEX_YT_INITIAL_DATA,
+    CLIENT_VERSION,
+    BROWSE_ENDPOINT,
+    CREATE_COMMENT_ENDPOINT,
+)
 
 
 class Post(object):
-    POST_URL_FORMAT = "https://www.youtube.com/post/{}"
-    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse"
-    CREATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/create_comment?prettyPrint=false"
-    REGEX_YT_INITIAL_DATA = r"ytInitialData = ({(?:(?:.|\n)*)?});</script>"
-
     def __init__(
         self,
         post_id,
@@ -40,7 +41,7 @@ class Post(object):
         self.comments = []
 
         self._requests_handler = requests_handler
-        self._post_url = Post.POST_URL_FORMAT.format(self.post_id)
+        self._post_url = POST_URL_FORMAT.format(post_id=self.post_id)
         self._first = True
         self._comments_continuation_token = None
 
@@ -95,7 +96,7 @@ class Post(object):
             if resp.status_code != 200:
                 error(f"Could not get data from the post_id `{self.post_id}` using the url `{self._post_url}`")
 
-            matches = re.findall(Post.REGEX_YT_INITIAL_DATA, resp.text)
+            matches = re.findall(REGEX_YT_INITIAL_DATA, resp.text)
 
             if not matches:
                 error("Could not find ytInitialData")
@@ -123,7 +124,7 @@ class Post(object):
                     "client": {
                         "clientName": "WEB",
                         "clientVersion": CLIENT_VERSION,
-                        "originalUrl": Post.POST_URL_FORMAT.format(self.post_id),
+                        "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
                         "visitorData": self._visitor_data,
                     }
                 },
@@ -131,7 +132,7 @@ class Post(object):
                 "clickTracking": {"clickTrackingParams": self._click_tracking_params},
             }
 
-            resp = self._requests_handler.post(Post.BROWSE_ENDPOINT, json=body, headers=headers)
+            resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
             data = resp.json()
 
             mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
@@ -232,7 +233,7 @@ class Post(object):
             "commentText": comment_text,
         }
 
-        resp = self._requests_handler.post(Post.CREATE_COMMENT_ENDPOINT, json=body, headers=headers)
+        resp = self._requests_handler.post(CREATE_COMMENT_ENDPOINT, json=body, headers=headers)
 
         if resp.status_code != 200:
             error("It was not possible to create the comment")
@@ -256,13 +257,13 @@ class Post(object):
 
     @staticmethod
     def from_post_id(post_id, requests_handler=default_requests_handler):
-        post_url = Post.POST_URL_FORMAT.format(post_id)
+        post_url = POST_URL_FORMAT.format(post_id=post_id)
         resp = requests_handler.get(post_url)
 
         if resp.status_code != 200:
             error(f"Could not get data from the post_id `{post_id}` using the url `{post_url}`")
 
-        matches = re.findall(Post.REGEX_YT_INITIAL_DATA, resp.text)
+        matches = re.findall(REGEX_YT_INITIAL_DATA, resp.text)
 
         if not matches:
             error("Could not find ytInitialData")
@@ -273,8 +274,7 @@ class Post(object):
             error("Could not parse json from ytInitialData")
 
         community_tab = ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]
-        community_tab_items = Post.get_items_from_community_tab(community_tab)
-
+        community_tab_items = community_tab["tabRenderer"]["content"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"]
         post_data = community_tab_items[0]["backstagePostThreadRenderer"]["post"]
 
         post = Post.from_data(post_data)
@@ -334,11 +334,3 @@ class Post(object):
             original_post=Post.from_data(data["originalPost"]),
             requests_handler=requests_handler,
         )
-
-    @staticmethod
-    def get_items_from_community_tab(tab):
-        try:
-            return tab["tabRenderer"]["content"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"]
-        except Exception as e:
-            print("[Can't get the contents from the tab]")
-            raise e

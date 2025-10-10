@@ -1,5 +1,5 @@
 from http.cookiejar import MozillaCookieJar
-from youtube_community_tab.community_tab import CommunityTab
+from youtube_community_tab.channel import Channel
 from youtube_community_tab import Post
 from youtube_community_tab.requests_handler import default_requests_handler
 import os
@@ -14,13 +14,13 @@ if os.path.exists("./cookies.txt"):
 
 @pytest.mark.xfail
 def test_load_membership_posts():
-    ct = CommunityTab("UCevD0wKzJFpfIkvHOiQsfLQ")
+    channel = Channel("UCevD0wKzJFpfIkvHOiQsfLQ")
 
     membership_post = None
-    while ct._posts_continuation_token is not False:
-        ct.load_posts()
+    while channel._posts_continuation_token is not False:
+        channel.load_posts()
 
-        for post in ct.posts:
+        for post in channel.posts:
             if post.sponsor_only_badge is not None:
                 membership_post = post
                 break

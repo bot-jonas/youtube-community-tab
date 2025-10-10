@@ -1,21 +1,21 @@
-from youtube_community_tab.community_tab import CommunityTab
+from youtube_community_tab.channel import Channel
 
 
 def test_community_tab():
-    ct = CommunityTab("vsauce1")
-    ct.load_posts()
+    channel = Channel("vsauce1")
+    channel.load_posts()
 
-    num_posts = len(ct.posts)
+    num_posts = len(channel.posts)
 
     assert num_posts > 0
-    assert ct._posts_continuation_token
+    assert channel._posts_continuation_token
 
-    ct.load_posts()
-    num_posts_ = len(ct.posts)
+    channel.load_posts()
+    num_posts_ = len(channel.posts)
 
     assert num_posts_ > num_posts
 
-    post = ct.posts[-1]  # Choose old post to raise probability of 'good' data
+    post = channel.posts[-1]  # Choose old post to raise probability of 'good' data
     post.load_comments()
 
     num_comments = len(post.comments)

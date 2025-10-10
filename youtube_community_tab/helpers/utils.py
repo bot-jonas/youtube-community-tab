@@ -1,8 +1,6 @@
 import json
 from functools import reduce
 
-CLIENT_VERSION = "2.20220311.01.00"
-
 
 def deep_get(data, path, default=None):
     keys = path.split(".")

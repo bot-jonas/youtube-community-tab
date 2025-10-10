@@ -1,20 +1,21 @@
 import json
-from .helpers.utils import deep_get, CLIENT_VERSION
+from .helpers.utils import deep_get
 from .requests_handler import default_requests_handler
 from .protobuf.keys.fixed_comment_params import fixed_comment_params
 from .protobuf.keys.perform_comment_action_params import perform_comment_action_params, CommentAction
 from .protobuf.keys.update_comment_params import update_comment_params
 from .helpers.logger import error
+from .constants import (
+    POST_URL_FORMAT,
+    FIXED_COMMENT_URL_FORMAT,
+    CLIENT_VERSION,
+    BROWSE_ENDPOINT,
+    UPDATE_COMMENT_ENDPOINT,
+    PERFORM_COMMENT_ACTION_ENDPOINT,
+)
 
 
 class Comment(object):
-    POST_FORMAT_URL = "https://www.youtube.com/post/{}"
-    FIXED_COMMENT_FORMAT_URL = "https://www.youtube.com/post/{}?lc={}"
-
-    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"
-    UPDATE_COMMENT_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/update_comment?prettyPrint=false"
-    PERFORM_COMMENT_ACTION_ENDPOINT = "https://www.youtube.com/youtubei/v1/comment/perform_comment_action?prettyPrint=false"
-
     def __init__(
         self,
         post_id,
@@ -77,7 +78,7 @@ class Comment(object):
                     "client": {
                         "clientName": "WEB",
                         "clientVersion": CLIENT_VERSION,
-                        "originalUrl": Comment.POST_FORMAT_URL.format(self.post_id),
+                        "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
                         "visitorData": self._visitor_data,
                     },
                 },
@@ -85,7 +86,7 @@ class Comment(object):
                 "clickTracking": {"clickTrackingParams": self._click_tracking_params},
             }
 
-            resp = self._requests_handler.post(Comment.BROWSE_ENDPOINT, json=body, headers=headers)
+            resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
             data = resp.json()
 
             mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
@@ -170,7 +171,7 @@ class Comment(object):
 
     @staticmethod
     def from_ids(comment_id, post_id, channel_id, requests_handler=default_requests_handler):
-        fixed_comment_url = Comment.FIXED_COMMENT_FORMAT_URL.format(post_id, comment_id)
+        fixed_comment_url = FIXED_COMMENT_URL_FORMAT.format(post_id=post_id, comment_id=comment_id)
 
         c = fixed_comment_params(comment_id, post_id, channel_id)
 
@@ -185,7 +186,7 @@ class Comment(object):
             "continuation": c,
         }
 
-        resp = requests_handler.post(Comment.BROWSE_ENDPOINT, json=body)
+        resp = requests_handler.post(BROWSE_ENDPOINT, json=body)
         data = resp.json()
 
         mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
@@ -234,7 +235,7 @@ class Comment(object):
             "commentText": comment_text,
         }
 
-        resp = self._requests_handler.post(Comment.UPDATE_COMMENT_ENDPOINT, json=body, headers=headers)
+        resp = self._requests_handler.post(UPDATE_COMMENT_ENDPOINT, json=body, headers=headers)
         data = resp.json()
 
         status = deep_get(data, "actions.0.updateCommentAction.actionResult.status")
@@ -286,7 +287,7 @@ class Comment(object):
             ],
         }
 
-        resp = self._requests_handler.post(Comment.PERFORM_COMMENT_ACTION_ENDPOINT, json=body, headers=headers)
+        resp = self._requests_handler.post(PERFORM_COMMENT_ACTION_ENDPOINT, json=body, headers=headers)
 
         if resp.status_code != 200:
             error("Could not perform the action")

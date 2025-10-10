@@ -1,24 +1,22 @@
 import json
 import re
-from .helpers.utils import deep_get, CLIENT_VERSION
+from .helpers.utils import deep_get
 from .helpers.logger import error
 from .requests_handler import default_requests_handler
 from .post import Post
+from .constants import (
+    COMMUNITY_TAB_CHANNEL_ID_URL_FORMAT,
+    COMMUNITY_TAB_HANDLE_URL_FORMAT,
+    COMMUNITY_TAB_LEGACY_USERNAME_URL_FORMAT,
+    REGEX_YT_INITIAL_DATA,
+    CLIENT_VERSION,
+    BROWSE_ENDPOINT,
+)
 
 
-class CommunityTab:
-    COMMUNITY_TAB_URL_FORMATS = {
-        "CHANNEL_ID": "https://www.youtube.com/channel/{}/posts",  # UC6nSFpj9HTCZ5t-N3Rm3-HA
-        "HANDLE": "https://www.youtube.com/{}/posts",  # @Vsauce
-        "LEGACY_USERNAME": "https://www.youtube.com/c/{}/posts",  # vsauce1
-    }
-
-    BROWSE_ENDPOINT = "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-
-    REGEX_YT_INITIAL_DATA = r"ytInitialData = ({(?:(?:.|\n)*)?});</script>"
-
-    def __init__(self, channel, requests_handler=default_requests_handler):
-        self.channel = channel
+class Channel:
+    def __init__(self, identifier, requests_handler=default_requests_handler):
+        self.identifier = identifier
         self.channel_id = None
         self.posts = []
 
@@ -31,12 +29,12 @@ class CommunityTab:
         self._session_index = "0"
 
     def _get_community_url(self):
-        if self.channel.startswith("UC"):
-            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["CHANNEL_ID"].format(self.channel)
-        elif self.channel.startswith("@"):
-            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["HANDLE"].format(self.channel)
+        if self.identifier.startswith("UC"):
+            return COMMUNITY_TAB_CHANNEL_ID_URL_FORMAT.format(channel_id=self.identifier)
+        elif self.identifier.startswith("@"):
+            return COMMUNITY_TAB_HANDLE_URL_FORMAT.format(handle=self.identifier)
         else:
-            return CommunityTab.COMMUNITY_TAB_URL_FORMATS["LEGACY_USERNAME"].format(self.channel)
+            return COMMUNITY_TAB_LEGACY_USERNAME_URL_FORMAT.format(legacy_username=self.identifier)
 
     def load_posts(self):
         if self._posts_continuation_token is None:
@@ -48,9 +46,9 @@ class CommunityTab:
         resp = self._requests_handler.get(self._community_url)
 
         if resp.status_code != 200:
-            error(f"Could not get data from the channel `{self.channel}` using the url `{self._community_url}`")
+            error(f"Could not get data from the identifier `{self.identifier}` using the url `{self._community_url}`")
 
-        matches = re.findall(CommunityTab.REGEX_YT_INITIAL_DATA, resp.text)
+        matches = re.findall(REGEX_YT_INITIAL_DATA, resp.text)
 
         if not matches:
             error("Could not find ytInitialData")
@@ -91,7 +89,7 @@ class CommunityTab:
             },
         }
 
-        resp = self._requests_handler.post(CommunityTab.BROWSE_ENDPOINT, json=body, headers=headers)
+        resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
         data = resp.json()
 
         posts_data = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
