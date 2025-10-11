@@ -175,7 +175,6 @@ class Post(object):
                         payload,
                         self.post_id,
                         self.channel_id,
-                        deep_get(item[kind], f"{replies_continuation_endpoint_key}.continuationCommand.token"),
                         deep_get(item[kind], f"{replies_continuation_endpoint_key}.clickTrackingParams"),
                         self._visitor_data,
                         self._session_index,

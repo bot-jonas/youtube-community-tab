@@ -1,0 +1,52 @@
+syntax = "proto2";
+
+message CommentRepliesParams {
+  required Msg1 msg1 = 80226972;
+
+  message Msg1 {
+    required string str2 = 2; // "FEcomment_post_detail_page_web_replies_page"
+    required string InnerCommentRepliesParams_b64 = 3;
+  }
+}
+
+message InnerCommentRepliesParams {
+    required string str2 = 2; // "posts"
+
+    required Msg2 msg2 = 25;
+
+    required Msg3 msg3 = 45;
+
+    required Msg4 msg4 = 53;
+
+    message Msg2  {
+      required string post_id = 22;
+    }
+
+    message Msg3  {
+      required int32 int2 = 2; // 1
+      required int32 int3 = 3; // 1
+    }
+
+    message Msg4 {
+      required Msg5 msg5 = 3;
+      required string comment_replies_item = 8; // f"comment-replies-item-{comment_id}"
+    }
+
+    message Msg5 {
+      required string comment_id = 2;
+      required Msg6 msg6 = 4;
+      required string channel_id = 5;
+      required int32 int8 = 8; // 1
+      required int32 int9 = 9; // 10
+      required string post_id = 15;
+      required Msg7 msg7 = 16;
+    }
+
+    message Msg6 {
+      required int32 int1 = 1; // 0
+    }
+
+    message Msg7 {
+      required int32 int1 = 1; // 1
+    }
+  }

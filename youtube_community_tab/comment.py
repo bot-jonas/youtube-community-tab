@@ -4,6 +4,7 @@ from .requests_handler import default_requests_handler
 from .protobuf.keys.fixed_comment_params import fixed_comment_params
 from .protobuf.keys.perform_comment_action_params import perform_comment_action_params, CommentAction
 from .protobuf.keys.update_comment_params import update_comment_params
+from .protobuf.keys.comment_replies_params import comment_replies_params
 from .helpers.logger import error
 from .constants import (
     POST_URL_FORMAT,
@@ -24,7 +25,6 @@ class Comment(object):
         author=None,
         content_text=None,
         vote_count=None,
-        replies_continuation_token=None,
         click_tracking_params=None,
         visitor_data=None,
         session_index="0",
@@ -39,7 +39,7 @@ class Comment(object):
         self.replies = []
 
         self._requests_handler = requests_handler
-        self._replies_continuation_token = replies_continuation_token
+        self._replies_continuation_token = comment_replies_params(self.channel_id, self.post_id, self.comment_id)
 
         self._click_tracking_params = click_tracking_params
         self._visitor_data = visitor_data
@@ -65,47 +65,54 @@ class Comment(object):
         return self.content_text
 
     def load_replies(self):
-        if self._replies_continuation_token:
-            headers = {
-                "X-Goog-AuthUser": self._session_index,
-                "X-Origin": "https://www.youtube.com",
-                "X-Youtube-Client-Name": "1",
-                "X-Youtube-Client-Version": CLIENT_VERSION,
-            }
+        if not self._replies_continuation_token:
+            return
 
-            body = {
-                "context": {
-                    "client": {
-                        "clientName": "WEB",
-                        "clientVersion": CLIENT_VERSION,
-                        "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
-                        "visitorData": self._visitor_data,
-                    },
+        headers = {
+            "X-Goog-AuthUser": self._session_index,
+            "X-Origin": "https://www.youtube.com",
+            "X-Youtube-Client-Name": "1",
+            "X-Youtube-Client-Version": CLIENT_VERSION,
+        }
+
+        body = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": CLIENT_VERSION,
+                    "originalUrl": POST_URL_FORMAT.format(post_id=self.post_id),
+                    "visitorData": self._visitor_data,
                 },
-                "continuation": self._replies_continuation_token,
-                "clickTracking": {"clickTrackingParams": self._click_tracking_params},
-            }
+            },
+            "continuation": self._replies_continuation_token,
+            "clickTracking": {"clickTrackingParams": self._click_tracking_params},
+        }
 
-            resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
-            data = resp.json()
+        resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
+        data = resp.json()
 
-            mutations = data["frameworkUpdates"]["entityBatchUpdate"]["mutations"]
-            payload_by_id = {}
-            for mutation in mutations:
-                payload = mutation["payload"]
+        mutations = deep_get(data, "frameworkUpdates.entityBatchUpdate.mutations")
 
-                if "commentEntityPayload" not in payload:
-                    continue
+        if mutations is None:
+            self._replies_continuation_token = False
+            return
 
-                payload = payload["commentEntityPayload"]
-                comment_id = payload["properties"]["commentId"]
+        payload_by_id = {}
+        for mutation in mutations:
+            payload = mutation["payload"]
 
-                payload_by_id[comment_id] = payload
+            if "commentEntityPayload" not in payload:
+                continue
 
-            self._click_tracking_params = data["trackingParams"]
-            continuation_items = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
+            payload = payload["commentEntityPayload"]
+            comment_id = payload["properties"]["commentId"]
 
-            self._append_replies_from_items(continuation_items, payload_by_id)
+            payload_by_id[comment_id] = payload
+
+        self._click_tracking_params = data["trackingParams"]
+        continuation_items = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
+
+        self._append_replies_from_items(continuation_items, payload_by_id)
 
     def _append_replies_from_items(self, items, payload_by_id):
         there_is_no_continuation_token = True
@@ -120,7 +127,6 @@ class Comment(object):
                         payload_by_id[reply_id],
                         self.post_id,
                         self.channel_id,
-                        replies_continuation_token=None,
                         click_tracking_params=self._click_tracking_params,
                         visitor_data=self._visitor_data,
                         session_index=self._session_index,
@@ -143,7 +149,6 @@ class Comment(object):
         data,
         post_id,
         channel_id,
-        replies_continuation_token,
         click_tracking_params,
         visitor_data,
         session_index,
@@ -162,7 +167,6 @@ class Comment(object):
                 # "sponsorCommentBadge": deep_get(data, "sponsorCommentBadge"),
             },
             # vote_count=deep_get(data, "voteCount"),
-            replies_continuation_token=replies_continuation_token,
             click_tracking_params=click_tracking_params,
             visitor_data=visitor_data,
             session_index=session_index,
@@ -212,7 +216,6 @@ class Comment(object):
                 payload,
                 post_id,
                 channel_id,
-                replies_continuation_token=deep_get(data, f"{replies_continuation_endpoint_key}.continuationCommand.token"),
                 click_tracking_params=deep_get(data, f"{replies_continuation_endpoint_key}.clickTrackingParams"),
                 visitor_data=None,
                 session_index=None,

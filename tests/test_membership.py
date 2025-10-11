@@ -53,15 +53,6 @@ def test_membership_post():
 
     assert num_comments_ > num_comments
 
-    replied_comments = list(filter(lambda x: x._replies_continuation_token, post.comments))
-
-    if len(replied_comments) > 0:
-        comment = replied_comments[0]
-
-        comment.load_replies()
-
-        assert len(comment.replies) > 0
-
 
 if __name__ == "__main__":
     test_load_membership_posts()

@@ -10,8 +10,6 @@ def test_comment():
 
     assert comment.get_text() == "I feel special for being one of the few people to see this lol"
 
-    assert comment._replies_continuation_token
-
     comment.load_replies()
 
     assert len(comment.replies) > 0
