@@ -1,32 +1,15 @@
-import json
-import re
-from .helpers.utils import deep_get
-from .helpers.logger import error
-from .requests_handler import default_requests_handler
-from .post import Post
+from .posts_iterator import PostsIterator
 from .constants import (
     COMMUNITY_TAB_CHANNEL_ID_URL_FORMAT,
     COMMUNITY_TAB_HANDLE_URL_FORMAT,
     COMMUNITY_TAB_LEGACY_USERNAME_URL_FORMAT,
-    REGEX_YT_INITIAL_DATA,
-    CLIENT_VERSION,
-    BROWSE_ENDPOINT,
 )
 
 
 class Channel:
-    def __init__(self, identifier, requests_handler=default_requests_handler):
+    def __init__(self, identifier):
         self.identifier = identifier
-        self.channel_id = None
-        self.posts = []
-
-        self._requests_handler = requests_handler
-        self._community_url = self._get_community_url()
-        self._posts_continuation_token = None
-
-        self._click_tracking_params = None
-        self._visitor_data = None
-        self._session_index = "0"
+        self.community_url = self._get_community_url()
 
     def _get_community_url(self):
         if self.identifier.startswith("UC"):
@@ -36,106 +19,5 @@ class Channel:
         else:
             return COMMUNITY_TAB_LEGACY_USERNAME_URL_FORMAT.format(legacy_username=self.identifier)
 
-    def load_posts(self):
-        if self._posts_continuation_token is None:
-            self._append_posts_from_items(self._get_initial_posts_data())
-        elif self._posts_continuation_token is not False:
-            self._append_posts_from_items(self._get_posts_data())
-
-    def _get_initial_posts_data(self):
-        resp = self._requests_handler.get(self._community_url)
-
-        if resp.status_code != 200:
-            error(f"Could not get data from the identifier `{self.identifier}` using the url `{self._community_url}`")
-
-        matches = re.findall(REGEX_YT_INITIAL_DATA, resp.text)
-
-        if not matches:
-            error("Could not find ytInitialData")
-
-        try:
-            ytInitialData = json.loads(matches[0])
-        except json.decoder.JSONDecodeError:
-            error("Could not parse json from ytInitialData")
-
-        community_tab = self._get_community_tab(ytInitialData)
-
-        # Update attributes
-        self.channel_id = ytInitialData["metadata"]["channelMetadataRenderer"]["externalId"]
-        self._update_session_attributes(community_tab, ytInitialData)
-
-        return self._get_posts_data_from_community_tab(community_tab)
-
-    def _get_posts_data(self):
-        headers = {
-            "X-Goog-AuthUser": self._session_index,
-            "X-Origin": "https://www.youtube.com",
-            "X-Youtube-Client-Name": "1",
-            "X-Youtube-Client-Version": CLIENT_VERSION,
-        }
-
-        body = {
-            "context": {
-                "client": {
-                    "clientName": "WEB",
-                    "clientVersion": CLIENT_VERSION,
-                    "originalUrl": self._community_url,
-                    "visitorData": self._visitor_data,
-                }
-            },
-            "continuation": self._posts_continuation_token,
-            "clickTracking": {
-                "clickTrackingParams": self._click_tracking_params,
-            },
-        }
-
-        resp = self._requests_handler.post(BROWSE_ENDPOINT, json=body, headers=headers)
-        data = resp.json()
-
-        posts_data = deep_get(data, "onResponseReceivedEndpoints.0.appendContinuationItemsAction.continuationItems", default=[])
-        self._click_tracking_params = data["onResponseReceivedEndpoints"][0]["clickTrackingParams"]
-
-        return posts_data
-
-    def _append_posts_from_items(self, items):
-        there_is_no_continuation_token = True
-
-        for item in items:
-            kind = list(item.keys())[0]
-
-            if kind == "backstagePostThreadRenderer":
-                self.posts.append(Post.from_data(item[kind]["post"], requests_handler=self._requests_handler))
-            elif kind == "continuationItemRenderer":
-                self._posts_continuation_token = item[kind]["continuationEndpoint"]["continuationCommand"]["token"]
-                there_is_no_continuation_token = False
-
-        if there_is_no_continuation_token:
-            self._posts_continuation_token = False
-
-    def _get_community_tab(self, ytInitialData):
-        for tab in ytInitialData["contents"]["twoColumnBrowseResultsRenderer"]["tabs"]:
-            url = deep_get(tab, "tabRenderer.endpoint.commandMetadata.webCommandMetadata.url", default="")
-
-            if url.endswith("/posts"):
-                return tab
-
-        error("Could not find community tab in the ytInitialData")
-
-    def _get_posts_data_from_community_tab(self, community_tab):
-        try:
-            return community_tab["tabRenderer"]["content"]["sectionListRenderer"]["contents"][0]["itemSectionRenderer"]["contents"]
-        except KeyError:
-            error("Could not get the contents from the community tab")
-
-    def _update_session_attributes(self, community_tab, ytInitialData):
-        try:
-            self._click_tracking_params = community_tab["tabRenderer"]["content"]["sectionListRenderer"]["trackingParams"]
-        except KeyError:
-            error("Could not get the click tracking params from the community tab")
-
-        try:
-            self._visitor_data = ytInitialData["responseContext"]["webResponseContextExtensionData"]["ytConfigData"]["visitorData"]
-        except KeyError:
-            error("Could not get the visitor data from the ytInitialData")
-
-        self._session_index = str(deep_get(ytInitialData, "responseContext.webResponseContextExtensionData.ytConfigData.sessionIndex", default=""))
+    def posts(self):
+        return PostsIterator(self)

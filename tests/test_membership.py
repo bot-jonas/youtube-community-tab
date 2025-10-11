@@ -1,7 +1,7 @@
 from http.cookiejar import MozillaCookieJar
 from youtube_community_tab.channel import Channel
 from youtube_community_tab import Post
-from youtube_community_tab.requests_handler import default_requests_handler
+from youtube_community_tab.requests_handler import get_requests_handler
 import os
 import pytest
 
@@ -9,26 +9,14 @@ import pytest
 if os.path.exists("./cookies.txt"):
     cookiejar = MozillaCookieJar("./cookies.txt")
     cookiejar.load()
-    default_requests_handler.set_cookies(cookiejar)
+    get_requests_handler().set_cookies(cookiejar)
 
 
 @pytest.mark.xfail
 def test_load_membership_posts():
     channel = Channel("UCevD0wKzJFpfIkvHOiQsfLQ")
 
-    membership_post = None
-    while channel._posts_continuation_token is not False:
-        channel.load_posts()
-
-        for post in channel.posts:
-            if post.sponsor_only_badge is not None:
-                membership_post = post
-                break
-
-        if membership_post is not None:
-            break
-
-    assert membership_post is not None
+    assert any(map(lambda p: p.sponsor_only_badge is not None, channel.posts()))
 
 
 @pytest.mark.xfail
@@ -42,16 +30,14 @@ def test_membership_post():
 
     assert post_text == expected_text
 
-    post.load_comments()
-    num_comments = len(post.comments)
+    fetched_comments = []
+    for comment in post.comments():
+        fetched_comments.append(comment)
 
-    assert num_comments > 0
-    assert post._comments_continuation_token
+        if len(fetched_comments) >= 22:
+            break
 
-    post.load_comments()
-    num_comments_ = len(post.comments)
-
-    assert num_comments_ > num_comments
+    assert len(fetched_comments) >= 22
 
 
 if __name__ == "__main__":

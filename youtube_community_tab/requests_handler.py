@@ -65,4 +65,13 @@ class DefaultRequestsHandler(RequestsHandler):
         return requests.utils.dict_from_cookiejar(self._session.cookies).get(name)
 
 
-default_requests_handler = DefaultRequestsHandler()
+_requests_handler = DefaultRequestsHandler()
+
+
+def set_requests_handler(requests_handler):
+    global _requests_handler
+    _requests_handler = requests_handler
+
+
+def get_requests_handler():
+    return _requests_handler

@@ -10,32 +10,24 @@ def test_post():
 
     assert post_text == expected_text
 
-    post.load_comments()
-    num_comments = len(post.comments)
+    fetched_comments = []
+    for comment in post.comments():
+        fetched_comments.append(comment)
 
-    assert num_comments > 0
-    assert post._comments_continuation_token
+        if len(fetched_comments) >= 40:
+            break
 
-    post.load_comments()
-    num_comments_ = len(post.comments)
+    assert len(fetched_comments) >= 40
 
-    assert num_comments_ > num_comments
+    there_is_a_replied_comment = False
+    for comment in fetched_comments:
+        replies = list(comment.replies())
 
-    replied_comments = list(filter(lambda x: x._replies_continuation_token, post.comments))
+        if len(replies) > 0:
+            there_is_a_replied_comment = True
+            break
 
-    if len(replied_comments) > 0:
-        test = False
-        for comment in replied_comments:
-            comment.load_replies()
-
-            if len(comment.replies) > 0:
-                test = True
-                break
-            else:
-                print("You cannot open the replies from this comment!")
-                print(f"https://www.youtube.com/channel/{comment.channel_id}/community?lc={comment.comment_id}&lb={comment.post_id}")
-
-        assert test
+    assert there_is_a_replied_comment
 
 
 if __name__ == "__main__":

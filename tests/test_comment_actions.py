@@ -1,6 +1,6 @@
 from http.cookiejar import MozillaCookieJar
 from youtube_community_tab import Post
-from youtube_community_tab.requests_handler import default_requests_handler
+from youtube_community_tab.requests_handler import get_requests_handler
 import time
 import pytest
 import os
@@ -8,7 +8,7 @@ import os
 if os.path.exists("./cookies.txt"):
     cookiejar = MozillaCookieJar("./cookies.txt")
     cookiejar.load()
-    default_requests_handler.set_cookies(cookiejar)
+    get_requests_handler().set_cookies(cookiejar)
 
 
 @pytest.mark.xfail

@@ -10,9 +10,11 @@ def test_comment():
 
     assert comment.get_text() == "I feel special for being one of the few people to see this lol"
 
-    comment.load_replies()
+    fetched_replies = []
+    for reply in comment.replies():
+        fetched_replies.append(reply)
 
-    assert len(comment.replies) > 0
+    assert len(fetched_replies) > 0
 
 
 if __name__ == "__main__":

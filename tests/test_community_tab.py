@@ -3,31 +3,26 @@ from youtube_community_tab.channel import Channel
 
 def test_community_tab():
     channel = Channel("vsauce1")
-    channel.load_posts()
 
-    num_posts = len(channel.posts)
+    fetched_posts = []
+    for post in channel.posts():
+        fetched_posts.append(post)
 
-    assert num_posts > 0
-    assert channel._posts_continuation_token
+        if len(fetched_posts) == 20:
+            break
 
-    channel.load_posts()
-    num_posts_ = len(channel.posts)
+    assert len(fetched_posts) == 20
 
-    assert num_posts_ > num_posts
+    post = fetched_posts[-1]
 
-    post = channel.posts[-1]  # Choose old post to raise probability of 'good' data
-    post.load_comments()
+    fetched_comments = []
+    for comment in post.comments():
+        fetched_comments.append(comment)
 
-    num_comments = len(post.comments)
+        if len(fetched_comments) >= 40:
+            break
 
-    assert num_comments > 0
-    assert post._comments_continuation_token
-
-    post.load_comments()
-
-    num_comments_ = len(post.comments)
-
-    assert num_comments_ > num_comments
+    assert len(fetched_comments) >= 40
 
 
 if __name__ == "__main__":
